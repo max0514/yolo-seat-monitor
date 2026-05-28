@@ -22,6 +22,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+import requests as http_requests
 from flask import Flask, jsonify, render_template, request, send_file, send_from_directory
 from PIL import Image
 from ultralytics import YOLO
@@ -50,6 +51,7 @@ AVAILABLE_MODELS = {
 }
 
 LIBRARY_FOCUS = {"person", "chair", "couch", "dining table", "laptop", "book", "backpack"}
+OCCUPANCY_CLASSES = {"person", "laptop"}
 DEFAULT_OCCUPANCY_THRESHOLD = 0.15  # 人 bbox ∩ 座位 / 座位面積 ≥ 0.15 視為佔用
 
 # ---------- 模型快取 ----------
@@ -186,9 +188,8 @@ def compute_seat_status(detections, rois, image_shape):
     """
     h, w = image_shape[:2]
     threshold = rois.get("occupancy_threshold", DEFAULT_OCCUPANCY_THRESHOLD)
-    person_dets = [d for d in detections if d["class"] == "person"]
+    occ_dets = [d for d in detections if d["class"] in OCCUPANCY_CLASSES]
 
-    # 預先建立每張座位 mask（O(W*H) 一次）
     seat_data = []
     for seat in rois.get("seats", []):
         poly_np = np.array(seat["polygon"], dtype=np.int32)
@@ -202,10 +203,10 @@ def compute_seat_status(detections, rois, image_shape):
     status_list = []
     for seat, seat_mask, seat_area in seat_data:
         best_cov = 0.0
-        best_p = None
+        best_det = None
         if seat_area > 0:
-            for p in person_dets:
-                x1, y1, x2, y2 = p["box"]
+            for d in occ_dets:
+                x1, y1, x2, y2 = d["box"]
                 px1 = max(0, int(x1)); py1 = max(0, int(y1))
                 px2 = min(w, int(x2)); py2 = min(h, int(y2))
                 if px1 >= px2 or py1 >= py2:
@@ -214,13 +215,14 @@ def compute_seat_status(detections, rois, image_shape):
                 cov = inter / seat_area
                 if cov > best_cov:
                     best_cov = cov
-                    best_p = p
+                    best_det = d
         status_list.append({
             "id": seat["id"],
             "label": seat.get("label", seat["id"]),
             "occupied": best_cov >= threshold,
             "coverage": round(best_cov, 4),
-            "person_confidence": round(best_p["confidence"], 4) if best_p else 0.0,
+            "matched_class": best_det["class"] if best_det else None,
+            "person_confidence": round(best_det["confidence"], 4) if best_det else 0.0,
         })
     return status_list
 
@@ -271,6 +273,8 @@ def draw_seat_overlay(image_bgr, rois, seat_status):
     return blended
 
 # ---------- 推論 ----------
+RELEVANT_CLASSES = {"person", "laptop", "dining table", "chair", "couch"}
+
 def run_inference(image_bgr, model_name, conf, iou, apply_rois=True):
     model = get_model(model_name)
     t0 = time.perf_counter()
@@ -278,7 +282,6 @@ def run_inference(image_bgr, model_name, conf, iou, apply_rois=True):
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
     r = results[0]
-    annotated_bgr = r.plot()
     names = r.names
 
     detections, stats = [], {}
@@ -294,6 +297,19 @@ def run_inference(image_bgr, model_name, conf, iou, apply_rois=True):
                 "box": [round(v, 1) for v in xyxy],
             })
             stats[cls_name] = stats.get(cls_name, 0) + 1
+
+    annotated_bgr = image_bgr.copy()
+    for d in detections:
+        if d["class"] not in RELEVANT_CLASSES:
+            continue
+        x1, y1, x2, y2 = [int(v) for v in d["box"]]
+        color = (0, 255, 0) if d["class"] == "person" else (255, 180, 0)
+        cv2.rectangle(annotated_bgr, (x1, y1), (x2, y2), color, 2)
+        label = f'{d["class"]} {d["confidence"]:.2f}'
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv2.rectangle(annotated_bgr, (x1, y1 - th - 6), (x1 + tw + 4, y1), color, -1)
+        cv2.putText(annotated_bgr, label, (x1 + 2, y1 - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
 
     # 座位狀態
     seat_status = []
@@ -331,6 +347,10 @@ def bgr_to_data_url(image_bgr, fmt="jpeg", quality=90) -> str:
 @app.route("/")
 def index():
     return render_template("index.html", models=list(AVAILABLE_MODELS.keys()))
+
+@app.route("/dashboard")
+def dashboard():
+    return render_template("dashboard.html")
 
 @app.route("/annotator")
 def annotator():
@@ -561,6 +581,86 @@ def api_detect():
                 vacant=vacant,
                 occ_rate=occupancy_rate,
                 result_id=result_id,
+                seat_status=seat_status,
+            )
+        except Exception as e:
+            print(f"[DB] log failed: {e}")
+
+    return jsonify({
+        "result_id": result_id,
+        "model": model_name,
+        "elapsed_ms": round(elapsed_ms, 1),
+        "image_shape": list(image_bgr.shape),
+        "num_detections": len(detections),
+        "detections": detections,
+        "stats": stats,
+        "library": {
+            "focus_stats": focus_stats,
+            "persons": persons,
+            "chairs_or_couches": chairs,
+            "estimated_vacant_seats": estimated_vacant_fallback,
+        },
+        "seats": {
+            "defined": total_seats > 0,
+            "total": total_seats,
+            "occupied": occupied,
+            "vacant": vacant,
+            "occupancy_rate": occupancy_rate,
+            "threshold": rois_used["occupancy_threshold"] if rois_used else None,
+            "status": seat_status,
+        },
+        "annotated_image": bgr_to_data_url(annotated_bgr),
+    })
+
+
+# ---------- Routes: ESP32-CAM capture + detect ----------
+@app.route("/api/capture-detect", methods=["POST"])
+def api_capture_detect():
+    body = request.get_json(silent=True) or {}
+    url = body.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "url is required"}), 400
+
+    model_name = body.get("model", "nano")
+    conf = float(body.get("conf", 0.25))
+    iou = float(body.get("iou", 0.45))
+
+    try:
+        resp = http_requests.get(url, timeout=8)
+        resp.raise_for_status()
+        arr = np.frombuffer(resp.content, dtype=np.uint8)
+        image_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if image_bgr is None:
+            return jsonify({"error": "Failed to decode image from camera"}), 400
+    except http_requests.RequestException as e:
+        return jsonify({"error": f"Camera fetch failed: {e}"}), 502
+
+    try:
+        annotated_bgr, detections, stats, elapsed_ms, seat_status, rois_used = run_inference(
+            image_bgr, model_name, conf, iou, apply_rois=True
+        )
+    except Exception as e:
+        return jsonify({"error": f"Inference failed: {e}"}), 500
+
+    persons = stats.get("person", 0)
+    chairs = stats.get("chair", 0) + stats.get("couch", 0)
+    focus_stats = {k: v for k, v in stats.items() if k in LIBRARY_FOCUS}
+    total_seats = len(seat_status)
+    occupied = sum(1 for s in seat_status if s["occupied"])
+    vacant = total_seats - occupied
+    occupancy_rate = round(occupied / total_seats, 4) if total_seats > 0 else None
+    estimated_vacant_fallback = max(chairs - persons, 0) if chairs > 0 else None
+
+    result_id = uuid.uuid4().hex[:12]
+    cv2.imwrite(str(RESULT_DIR / f"{result_id}.jpg"), annotated_bgr)
+
+    if total_seats > 0:
+        try:
+            log_detection_to_db(
+                model=model_name, num_detections=len(detections),
+                persons=persons, total_seats=total_seats,
+                occupied=occupied, vacant=vacant,
+                occ_rate=occupancy_rate, result_id=result_id,
                 seat_status=seat_status,
             )
         except Exception as e:

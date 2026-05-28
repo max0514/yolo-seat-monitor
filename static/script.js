@@ -337,6 +337,85 @@ function captureFrame() {
   return canvas.toDataURL("image/jpeg", 0.85);
 }
 
+// =========================================================
+// ESP32-CAM
+// =========================================================
+const esp32State = { liveTimer: null };
+
+$("esp32-interval").addEventListener("input", e => {
+  $("esp32-interval-val").textContent = parseFloat(e.target.value).toFixed(1) + "s";
+});
+
+async function esp32Detect(opts = {}) {
+  const url = $("esp32-url").value.trim();
+  if (!url) { log(`<span class="lp">!</span> ESP32 URL is empty`, "new"); return; }
+
+  state.busy = true;
+  setStatus("CAPTURING", "busy");
+
+  try {
+    const res = await fetch("/api/capture-detect", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        model: $("model-select").value,
+        conf: parseFloat($("conf-slider").value),
+        iou: parseFloat($("iou-slider").value),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Capture failed");
+
+    // show preview
+    const preview = $("esp32-preview");
+    preview.src = data.annotated_image;
+    preview.style.display = "block";
+    $("esp32-overlay").classList.add("hidden");
+
+    renderResult(data, opts);
+    if (!opts.silent) {
+      log(`📡 ESP32 → ${data.num_detections} objects · ${data.elapsed_ms}ms`, "new");
+    }
+    setStatus("READY");
+  } catch (err) {
+    log(`<span class="lp">!</span> ESP32: ${err.message}`, "new");
+    setStatus("ERROR", "error");
+  } finally {
+    state.busy = false;
+  }
+}
+
+$("btn-esp32-snap").addEventListener("click", () => {
+  if (!state.busy) esp32Detect();
+});
+
+$("btn-esp32-start").addEventListener("click", () => {
+  if (esp32State.liveTimer) return;
+  const intervalMs = parseFloat($("esp32-interval").value) * 1000;
+  log(`▶ ESP32 LIVE ON (${(intervalMs/1000).toFixed(1)}s interval)`, "new");
+
+  const tick = async () => {
+    if (state.busy) return;
+    await esp32Detect({ silent: true });
+  };
+  tick();
+  esp32State.liveTimer = setInterval(tick, intervalMs);
+
+  $("btn-esp32-start").disabled = true;
+  $("btn-esp32-stop").disabled = false;
+});
+
+$("btn-esp32-stop").addEventListener("click", () => {
+  if (esp32State.liveTimer) {
+    clearInterval(esp32State.liveTimer);
+    esp32State.liveTimer = null;
+    log(`■ ESP32 LIVE OFF`, "new");
+  }
+  $("btn-esp32-start").disabled = false;
+  $("btn-esp32-stop").disabled = true;
+});
+
 // ----- init -----
 log("system initialized", "new");
 log("YOLOv8 inference terminal ready");

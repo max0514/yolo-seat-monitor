@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SEAT MONITOR — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0f1117;
+  --card: #1a1d27;
+  --border: #2a2d3a;
+  --text: #e0e0e8;
+  --dim: #6b7084;
+  --green: #34d399;
+  --green-bg: rgba(52,211,153,0.08);
+  --green-border: rgba(52,211,153,0.25);
+  --red: #f87171;
+  --red-bg: rgba(248,113,113,0.08);
+  --red-border: rgba(248,113,113,0.25);
+  --font: 'Inter', -apple-system, sans-serif;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── header ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  flex-shrink: 0;
+}
+.logo {
+  display: flex; align-items: center; gap: 10px;
+}
+.logo h1 {
+  font-size: 15px; font-weight: 600; letter-spacing: 0.5px;
+}
+.logo .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--dim);
+  transition: background 0.4s;
+}
+.logo .dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.logo .dot.err { background: var(--red); }
+.nav { display: flex; gap: 6px; }
+.nav a {
+  font-size: 12px; font-weight: 500;
+  color: var(--dim); text-decoration: none;
+  padding: 5px 12px; border-radius: 6px;
+  border: 1px solid transparent;
+  transition: all 0.2s;
+}
+.nav a:hover { color: var(--text); border-color: var(--border); }
+.clock { font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+/* ── main grid ── */
+.main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  min-height: 0;
+}
+
+/* ── left: visualization ── */
+.viz {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 36px;
+  padding: 40px;
+  position: relative;
+}
+
+/* scene: 2 people behind a table */
+.scene {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+/* persons row */
+.persons {
+  display: flex;
+  gap: 60px;
+  margin-bottom: -10px;
+  z-index: 2;
+}
+
+.person-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.person-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  transition: color 0.5s;
+}
+.person-slot.vacant .person-label { color: var(--green); }
+.person-slot.occupied .person-label { color: var(--red); }
+
+/* person SVG silhouette */
+.person-figure {
+  width: 90px;
+  height: 130px;
+  position: relative;
+  transition: all 0.5s ease;
+}
+
+.person-figure svg {
+  width: 100%;
+  height: 100%;
+  transition: all 0.5s ease;
+}
+
+/* vacant: ghost outline */
+.person-slot.vacant .person-figure svg {
+  opacity: 0.12;
+}
+.person-slot.vacant .person-figure svg .body-fill { fill: var(--dim); }
+.person-slot.vacant .person-figure svg .body-stroke { stroke: var(--dim); }
+
+/* occupied: solid with glow */
+.person-slot.occupied .person-figure svg {
+  opacity: 1;
+}
+.person-slot.occupied .person-figure svg .body-fill { fill: var(--red); }
+.person-slot.occupied .person-figure svg .body-stroke { stroke: var(--red); }
+.person-slot.occupied .person-figure {
+  filter: drop-shadow(0 0 12px rgba(248,113,113,0.3));
+}
+
+/* status badge under person */
+.person-badge {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  padding: 3px 14px;
+  border-radius: 20px;
+  transition: all 0.5s;
+}
+.person-slot.vacant .person-badge {
+  color: var(--green);
+  background: var(--green-bg);
+  border: 1px solid var(--green-border);
+}
+.person-slot.occupied .person-badge {
+  color: var(--red);
+  background: var(--red-bg);
+  border: 1px solid var(--red-border);
+}
+
+/* table */
+.table-block {
+  width: 340px;
+  height: 70px;
+  background: linear-gradient(180deg, #3d3225 0%, #2c2418 100%);
+  border-radius: 10px;
+  border: 1px solid #4a3d2e;
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.table-block span {
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: rgba(255,255,255,0.1);
+  font-weight: 500;
+}
+
+/* table legs (subtle) */
+.table-block::before, .table-block::after {
+  content: '';
+  position: absolute;
+  bottom: -18px;
+  width: 6px;
+  height: 18px;
+  background: #2c2418;
+  border-radius: 0 0 3px 3px;
+}
+.table-block::before { left: 30px; }
+.table-block::after { right: 30px; }
+
+/* banner */
+.banner {
+  text-align: center;
+}
+.banner-count {
+  font-size: 56px;
+  font-weight: 700;
+  line-height: 1;
+  transition: color 0.5s;
+}
+.banner-count.none { color: var(--green); }
+.banner-count.some { color: #fbbf24; }
+.banner-count.full { color: var(--red); }
+.banner-sub {
+  font-size: 13px;
+  color: var(--dim);
+  margin-top: 6px;
+  letter-spacing: 1px;
+}
+
+/* ── right sidebar ── */
+.sidebar {
+  border-left: 1px solid var(--border);
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.section {
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dim);
+  letter-spacing: 1.5px;
+  margin-bottom: 12px;
+}
+
+/* camera */
+.cam-box {
+  width: 100%;
+  aspect-ratio: 4/3;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--border);
+  position: relative;
+}
+.cam-box img {
+  width: 100%; height: 100%; object-fit: cover;
+  display: none;
+}
+.cam-box .placeholder {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; color: var(--dim);
+}
+
+/* controls */
+.controls {
+  display: flex; gap: 6px; margin-top: 10px;
+}
+.btn {
+  flex: 1;
+  padding: 8px 0;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn:hover { background: rgba(255,255,255,0.04); }
+.btn:disabled { opacity: 0.25; cursor: default; }
+.btn:disabled:hover { background: transparent; }
+.btn.active { border-color: var(--green); color: var(--green); background: var(--green-bg); }
+
+/* stats */
+.stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.stat {
+  background: rgba(0,0,0,0.25);
+  border-radius: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+}
+.stat-label {
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 1px;
+  font-weight: 500;
+}
+.stat-val {
+  font-size: 24px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+/* log */
+.log {
+  flex: 1;
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--dim);
+  overflow-y: auto;
+  max-height: 180px;
+}
+.log .ts { color: var(--green); }
+.log .hi { color: var(--text); }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="logo">
+    <div class="dot" id="status-dot"></div>
+    <h1>Seat Monitor</h1>
+    <span class="clock" id="clock">--:--:--</span>
+  </div>
+  <nav class="nav">
+    <a href="/">Detector</a>
+    <a href="/annotator">Annotate</a>
+    <a href="/history">History</a>
+  </nav>
+</header>
+
+<main class="main">
+
+  <!-- Visualization -->
+  <div class="viz">
+    <div class="scene">
+
+      <!-- Two persons behind the table -->
+      <div class="persons">
+
+        <div class="person-slot vacant" id="slot-a">
+          <span class="person-label">SEAT A</span>
+          <div class="person-figure">
+            <svg viewBox="0 0 80 120" fill="none">
+              <!-- head -->
+              <circle cx="40" cy="22" r="16" class="body-fill body-stroke" stroke-width="2"/>
+              <!-- body / torso -->
+              <path d="M12 120 C12 75, 14 55, 40 48 C66 55, 68 75, 68 120" class="body-fill body-stroke" stroke-width="2"/>
+              <!-- shoulders hint -->
+              <path d="M8 90 Q10 70, 40 60 Q70 70, 72 90" class="body-stroke" stroke-width="2" fill="none"/>
+            </svg>
+          </div>
+          <span class="person-badge" id="badge-a">VACANT</span>
+        </div>
+
+        <div class="person-slot vacant" id="slot-b">
+          <span class="person-label">SEAT B</span>
+          <div class="person-figure">
+            <svg viewBox="0 0 80 120" fill="none">
+              <circle cx="40" cy="22" r="16" class="body-fill body-stroke" stroke-width="2"/>
+              <path d="M12 120 C12 75, 14 55, 40 48 C66 55, 68 75, 68 120" class="body-fill body-stroke" stroke-width="2"/>
+              <path d="M8 90 Q10 70, 40 60 Q70 70, 72 90" class="body-stroke" stroke-width="2" fill="none"/>
+            </svg>
+          </div>
+          <span class="person-badge" id="badge-b">VACANT</span>
+        </div>
+
+      </div>
+
+      <!-- Table in front -->
+      <div class="table-block"><span>TABLE</span></div>
+
+    </div>
+
+    <div class="banner">
+      <div class="banner-count none" id="banner-count">0 / 2</div>
+      <div class="banner-sub">SEATS OCCUPIED</div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+
+    <div class="section">
+      <div class="section-title">LIVE FEED</div>
+      <div class="cam-box">
+        <div class="placeholder" id="cam-ph">No feed</div>
+        <img id="cam-img" alt="">
+      </div>
+      <div class="controls">
+        <button class="btn" id="btn-snap">Snap</button>
+        <button class="btn" id="btn-live">Live</button>
+        <button class="btn" id="btn-stop" disabled>Stop</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">STATS</div>
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-label">PERSONS</div>
+          <div class="stat-val" id="s-persons">--</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">OCC RATE</div>
+          <div class="stat-val" id="s-rate">--</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">LATENCY</div>
+          <div class="stat-val" id="s-latency">--</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">SCANS</div>
+          <div class="stat-val" id="s-scans">0</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section" style="flex:1;">
+      <div class="section-title">LOG</div>
+      <div class="log" id="log"></div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const CAM_URL = "http://172.20.10.2/capture";
+let liveTimer = null, busy = false, scans = 0;
+
+setInterval(() => {
+  const d = new Date(), p = n => String(n).padStart(2,'0');
+  $('clock').textContent = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}, 1000);
+
+function log(msg) {
+  const el = document.createElement('div');
+  const d = new Date(), p = n => String(n).padStart(2,'0');
+  el.innerHTML = `<span class="ts">[${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}]</span> ${msg}`;
+  const box = $('log');
+  box.insertBefore(el, box.firstChild);
+  while (box.children.length > 40) box.removeChild(box.lastChild);
+}
+
+function setSeat(id, occupied) {
+  const slot = $('slot-' + id);
+  const badge = $('badge-' + id);
+  slot.classList.remove('vacant','occupied');
+  slot.classList.add(occupied ? 'occupied' : 'vacant');
+  badge.textContent = occupied ? 'OCCUPIED' : 'VACANT';
+}
+
+function updateBanner(occ) {
+  const el = $('banner-count');
+  el.textContent = `${occ} / 2`;
+  el.classList.remove('none','some','full');
+  el.classList.add(occ === 0 ? 'none' : occ >= 2 ? 'full' : 'some');
+}
+
+async function capture(silent) {
+  if (busy) return;
+  busy = true;
+  $('status-dot').className = 'dot';
+
+  try {
+    const res = await fetch('/api/capture-detect', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({url: CAM_URL, model:'nano', conf:0.25, iou:0.45}),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+
+    $('cam-img').src = d.annotated_image;
+    $('cam-img').style.display = 'block';
+    $('cam-ph').style.display = 'none';
+
+    const seats = d.seats, persons = d.library.persons;
+    if (seats.defined && seats.status.length >= 2) {
+      setSeat('a', seats.status[0].occupied);
+      setSeat('b', seats.status[1].occupied);
+      updateBanner(seats.occupied);
+    } else {
+      const occ = Math.min(persons, 2);
+      setSeat('a', occ >= 1);
+      setSeat('b', occ >= 2);
+      updateBanner(occ);
+    }
+
+    scans++;
+    $('s-persons').textContent = persons;
+    const rate = seats.defined && seats.occupancy_rate !== null
+      ? (seats.occupancy_rate * 100).toFixed(0) + '%'
+      : (Math.min(persons,2) * 50) + '%';
+    $('s-rate').textContent = rate;
+    $('s-latency').textContent = d.elapsed_ms.toFixed(0) + 'ms';
+    $('s-scans').textContent = scans;
+    $('status-dot').className = 'dot live';
+
+    if (!silent) log(`<span class="hi">${persons} person(s)</span> · ${d.elapsed_ms.toFixed(0)}ms`);
+  } catch (e) {
+    $('status-dot').className = 'dot err';
+    log(`<span style="color:var(--red)">Error:</span> ${e.message}`);
+  } finally {
+    busy = false;
+  }
+}
+
+$('btn-snap').onclick = () => capture(false);
+$('btn-live').onclick = () => {
+  if (liveTimer) return;
+  log('Live started');
+  const tick = () => { if (!busy) capture(true); };
+  tick();
+  liveTimer = setInterval(tick, 2000);
+  $('btn-live').disabled = true;
+  $('btn-live').classList.add('active');
+  $('btn-stop').disabled = false;
+};
+$('btn-stop').onclick = () => {
+  if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+  log('Live stopped');
+  $('btn-live').disabled = false;
+  $('btn-live').classList.remove('active');
+  $('btn-stop').disabled = true;
+  $('status-dot').className = 'dot';
+};
+
+log('Dashboard ready');
+</script>
+</body>
+</html>
