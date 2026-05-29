@@ -329,6 +329,9 @@ body {
         <div class="placeholder" id="cam-ph">No feed</div>
         <img id="cam-img" alt="">
       </div>
+      <input type="text" id="cam-url-input" placeholder="http://YOUR_ESP32_IP/capture"
+             style="width:100%;font-family:var(--font);font-size:11px;padding:6px 8px;margin-top:8px;
+                    background:rgba(0,0,0,0.3);color:var(--text);border:1px solid var(--border);border-radius:6px;">
       <div class="controls">
         <button class="btn" id="btn-snap">Snap</button>
         <button class="btn" id="btn-live">Live</button>
@@ -367,8 +370,13 @@ body {
 
 <script>
 const $ = id => document.getElementById(id);
-const CAM_URL = "http://172.20.10.2/capture";
+// Set camera URL via query param: ?cam=http://192.168.1.100/capture
+const defaultCam = new URLSearchParams(location.search).get("cam") || "";
 let liveTimer = null, busy = false, scans = 0;
+
+function getCamURL() {
+  return ($('cam-url-input').value || '').trim();
+}
 let prevStates = { a: null, b: null };
 
 setInterval(() => {
@@ -453,6 +461,10 @@ function updateBanner(seatStatuses) {
 
 async function capture(silent) {
   if (busy) return;
+  if (!getCamURL()) {
+    log('<span class="danger">Enter a camera URL first</span>');
+    return;
+  }
   busy = true;
   $('status-dot').className = 'dot';
 
@@ -460,7 +472,7 @@ async function capture(silent) {
     const res = await fetch('/api/capture-detect', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({url: CAM_URL, model:'nano', conf:0.25, iou:0.45}),
+      body: JSON.stringify({url: getCamURL(), model:'nano', conf:0.25, iou:0.45}),
     });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error);
@@ -526,6 +538,9 @@ $('btn-stop').onclick = () => {
   $('btn-stop').disabled = true;
   $('status-dot').className = 'dot';
 };
+
+// init cam URL from query param
+$('cam-url-input').value = defaultCam;
 
 log('Dashboard ready');
 log('States: <span class="hi">occupied</span> · <span class="warn">away</span> · <span class="danger">flagged (>1h)</span> · vacant');
