@@ -23,7 +23,7 @@ from typing import Any
 import cv2
 import numpy as np
 import requests as http_requests
-from flask import Flask, jsonify, render_template, request, send_file, send_from_directory
+from flask import Flask, jsonify, redirect, render_template, request, send_file, send_from_directory
 from PIL import Image
 from ultralytics import YOLO
 
@@ -50,83 +50,33 @@ AVAILABLE_MODELS = {
     "large":  "yolov8l.pt",
 }
 
-LIBRARY_FOCUS = {"person", "chair", "couch", "dining table", "laptop", "book", "backpack"}
-OCCUPANCY_CLASSES = {"person", "laptop"}
-BELONGING_CLASSES = {"laptop", "backpack", "book", "handbag", "suitcase", "cell phone"}
-DEFAULT_OCCUPANCY_THRESHOLD = 0.15  # 人 bbox ∩ 座位 / 座位面積 ≥ 0.15 視為佔用
-AWAY_FLAG_SECONDS = 3600  # 1 hour before flagging as illegal occupation
+LIBRARY_FOCUS = {"person", "chair", "couch", "dining table", "laptop", "book",
+                 "backpack", "bottle"}
+BELONGING_CLASSES = {"laptop", "backpack", "book", "handbag", "suitcase",
+                     "cell phone", "bottle"}
+DEFAULT_OCCUPANCY_THRESHOLD = 0.15
 
-# ---------- Seat State Tracker ----------
-# States: "vacant" / "occupied" / "away" / "flagged"
-#   vacant   – no person, no belongings
-#   occupied – person detected at seat
-#   away     – person left but belongings remain (timer starts)
-#   flagged  – belongings left for > AWAY_FLAG_SECONDS without person returning
+# ---------- Occupancy engine (contract-conformant) ----------
+from shared.seat_schema import Seat as SchemaSeat, Detection as SchemaDetection, Status
+from occupancy.engine import OccupancyEngine
 
-class SeatTracker:
-    """Track per-seat state across detection frames."""
-    def __init__(self):
-        self._seats = {}   # seat_id -> { state, person_left_at, belongings, last_seen_person }
+CONFIG_FILE = DATA_DIR / "config.json"
 
-    def _ensure(self, seat_id):
-        if seat_id not in self._seats:
-            self._seats[seat_id] = {
-                "state": "vacant",
-                "person_left_at": None,
-                "belongings": [],
-                "last_seen_person": None,
-            }
-        return self._seats[seat_id]
+def load_config() -> dict:
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"T_flag": 3600}
 
-    def update(self, seat_id, has_person, belongings_found):
-        """Update seat state based on current detection frame."""
-        s = self._ensure(seat_id)
-        now = datetime.now()
+def save_config(config: dict) -> None:
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
 
-        if has_person:
-            # Person is present → occupied, reset departure timer
-            s["state"] = "occupied"
-            s["person_left_at"] = None
-            s["belongings"] = belongings_found
-            s["last_seen_person"] = now
-        elif belongings_found:
-            # No person but belongings detected
-            if s["state"] == "occupied":
-                # Person just left
-                s["state"] = "away"
-                s["person_left_at"] = now
-            elif s["state"] in ("away", "flagged"):
-                # Still away – check if we should flag
-                if s["person_left_at"]:
-                    elapsed = (now - s["person_left_at"]).total_seconds()
-                    if elapsed >= AWAY_FLAG_SECONDS:
-                        s["state"] = "flagged"
-                else:
-                    s["person_left_at"] = now
-            else:
-                # Was vacant, now belongings appeared without person
-                s["state"] = "away"
-                s["person_left_at"] = now
-            s["belongings"] = belongings_found
-        else:
-            # No person, no belongings → vacant
-            s["state"] = "vacant"
-            s["person_left_at"] = None
-            s["belongings"] = []
-
-    def get(self, seat_id):
-        s = self._ensure(seat_id)
-        now = datetime.now()
-        away_seconds = None
-        if s["person_left_at"] and s["state"] in ("away", "flagged"):
-            away_seconds = round((now - s["person_left_at"]).total_seconds())
-        return {
-            "state": s["state"],
-            "away_seconds": away_seconds,
-            "belongings": s["belongings"],
-        }
-
-seat_tracker = SeatTracker()
+_config = load_config()
+occupancy_engine = OccupancyEngine(T_flag=_config.get("T_flag", 3600))
 
 
 # ---------- 模型快取 ----------
@@ -255,79 +205,67 @@ def scaled_rois(rois: dict[str, Any], target_w: int, target_h: int) -> dict[str,
         seats.append({**s, "polygon": [[p[0] * sx, p[1] * sy] for p in s["polygon"]]})
     return {**rois, "seats": seats, "image_size": {"w": target_w, "h": target_h}}
 
-# ---------- 座位佔用計算 ----------
+# ---------- 座位佔用計算（使用 OccupancyEngine） ----------
 def compute_seat_status(detections, rois, image_shape):
     """
-    For each seat polygon, check overlap with person bboxes and belonging bboxes.
-    Also update the global seat_tracker for time-based state tracking.
+    Convert pixel-space YOLO detections + pixel ROIs into normalized coordinates,
+    feed into OccupancyEngine, return status list for the API.
     """
     h, w = image_shape[:2]
-    threshold = rois.get("occupancy_threshold", DEFAULT_OCCUPANCY_THRESHOLD)
-    person_dets = [d for d in detections if d["class"] == "person"]
-    belonging_dets = [d for d in detections if d["class"] in BELONGING_CLASSES]
+    now = time.time()
 
-    seat_data = []
+    # Convert YOLO detections to normalized schema Detection objects
+    schema_dets = []
+    for d in detections:
+        x1, y1, x2, y2 = d["box"]
+        schema_dets.append(SchemaDetection(
+            bbox=(x1 / w, y1 / h, x2 / w, y2 / h),
+            confidence=d["confidence"],
+            cls=d["class"],
+            frame_ts=now,
+        ))
+
+    # Convert pixel ROI seats to normalized schema Seat objects
+    ref = rois.get("image_size") or {}
+    ref_w = ref.get("w", w)
+    ref_h = ref.get("h", h)
+    schema_seats = []
     for seat in rois.get("seats", []):
-        poly_np = np.array(seat["polygon"], dtype=np.int32)
-        if len(poly_np) < 3:
+        poly = seat.get("polygon", [])
+        if len(poly) < 3:
             continue
-        mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.fillPoly(mask, [poly_np], 1)
-        area = int(mask.sum())
-        seat_data.append((seat, mask, area))
+        norm_poly = [(p[0] / ref_w, p[1] / ref_h) for p in poly]
+        schema_seats.append(SchemaSeat(
+            id=seat["id"],
+            label=seat.get("label", seat["id"]),
+            zone=seat.get("zone", "main"),
+            roi_polygon=norm_poly,
+        ))
 
-    def best_overlap(dets_list, seat_mask, seat_area):
-        best_cov, best_d = 0.0, None
-        if seat_area > 0:
-            for d in dets_list:
-                x1, y1, x2, y2 = d["box"]
-                px1, py1 = max(0, int(x1)), max(0, int(y1))
-                px2, py2 = min(w, int(x2)), min(h, int(y2))
-                if px1 >= px2 or py1 >= py2:
-                    continue
-                inter = int(seat_mask[py1:py2, px1:px2].sum())
-                cov = inter / seat_area
-                if cov > best_cov:
-                    best_cov, best_d = cov, d
-        return best_cov, best_d
+    if not schema_seats:
+        return []
 
-    def find_all_belongings(seat_mask, seat_area):
-        found = []
-        if seat_area <= 0:
-            return found
-        for d in belonging_dets:
-            x1, y1, x2, y2 = d["box"]
-            px1, py1 = max(0, int(x1)), max(0, int(y1))
-            px2, py2 = min(w, int(x2)), min(h, int(y2))
-            if px1 >= px2 or py1 >= py2:
-                continue
-            inter = int(seat_mask[py1:py2, px1:px2].sum())
-            cov = inter / seat_area
-            if cov >= threshold:
-                found.append(d["class"])
-        return list(set(found))
+    # Run the engine
+    seat_states = occupancy_engine.update(schema_dets, schema_seats, now)
 
+    # Convert back to dict format for API response
     status_list = []
-    for seat, seat_mask, seat_area in seat_data:
-        person_cov, person_det = best_overlap(person_dets, seat_mask, seat_area)
-        has_person = person_cov >= threshold
-        belongings_found = find_all_belongings(seat_mask, seat_area)
-
-        # Update time-based state tracker
-        seat_tracker.update(seat["id"], has_person, belongings_found)
-        tracked = seat_tracker.get(seat["id"])
-
+    for ss in seat_states:
+        away_seconds = None
+        if ss.person_left_ts is not None and ss.status in (Status.AWAY, Status.FLAGGED):
+            away_seconds = round(now - ss.person_left_ts)
         status_list.append({
-            "id": seat["id"],
-            "label": seat.get("label", seat["id"]),
-            "occupied": has_person or bool(belongings_found),
-            "has_person": has_person,
-            "coverage": round(person_cov, 4),
-            "matched_class": person_det["class"] if person_det else None,
-            "person_confidence": round(person_det["confidence"], 4) if person_det else 0.0,
-            "belongings": belongings_found,
-            "state": tracked["state"],
-            "away_seconds": tracked["away_seconds"],
+            "id": ss.seat_id,
+            "label": next((s.get("label", s["id"]) for s in rois.get("seats", [])
+                          if s["id"] == ss.seat_id), ss.seat_id),
+            "occupied": ss.status in (Status.OCCUPIED, Status.AWAY, Status.FLAGGED),
+            "has_person": ss.status == Status.OCCUPIED,
+            "coverage": round(ss.confidence, 4),
+            "matched_class": "person" if ss.status == Status.OCCUPIED else None,
+            "person_confidence": round(ss.confidence, 4),
+            "belongings": list(ss.belongings),
+            "state": ss.status.value,
+            "away_seconds": away_seconds,
         })
     return status_list
 
@@ -377,9 +315,75 @@ def draw_seat_overlay(image_bgr, rois, seat_status):
                         cv2.FONT_HERSHEY_SIMPLEX, 0.45, (10, 14, 12), 1, cv2.LINE_AA)
     return blended
 
+# ---------- Auto-detect seats from YOLO chair/table detections ----------
+def auto_detect_seats(detections, image_shape):
+    """When no ROIs defined, use detected chairs as dynamic seats.
+    Returns (status_list, table_count)."""
+    h, w = image_shape[:2]
+    now = time.time()
+
+    chairs = sorted(
+        [d for d in detections if d["class"] in ("chair", "couch")],
+        key=lambda d: d["box"][0],  # stable left-to-right order
+    )
+    tables = [d for d in detections if d["class"] == "dining table"]
+
+    if not chairs:
+        return [], len(tables)
+
+    # Convert chair bboxes into Seat objects (padded slightly for person matching)
+    schema_seats = []
+    for i, chair in enumerate(chairs):
+        x1, y1, x2, y2 = chair["box"]
+        pad = 0.2
+        dx, dy = (x2 - x1) * pad, (y2 - y1) * pad
+        nx1 = max(0, x1 - dx) / w
+        ny1 = max(0, y1 - dy) / h
+        nx2 = min(w, x2 + dx) / w
+        ny2 = min(h, y2 + dy) / h
+        schema_seats.append(SchemaSeat(
+            id=f"auto-{i+1}",
+            label=f"Seat {i+1}",
+            zone="main",
+            roi_polygon=[(nx1, ny1), (nx2, ny1), (nx2, ny2), (nx1, ny2)],
+        ))
+
+    # Normalize all detections for the engine
+    schema_dets = [
+        SchemaDetection(
+            bbox=(d["box"][0] / w, d["box"][1] / h, d["box"][2] / w, d["box"][3] / h),
+            confidence=d["confidence"], cls=d["class"], frame_ts=now,
+        )
+        for d in detections
+    ]
+
+    seat_states = occupancy_engine.update(schema_dets, schema_seats, now)
+
+    status_list = []
+    for ss in seat_states:
+        away_sec = None
+        if ss.person_left_ts and ss.status in (Status.AWAY, Status.FLAGGED):
+            away_sec = round(now - ss.person_left_ts)
+        idx = ss.seat_id.split("-")[1]
+        status_list.append({
+            "id": ss.seat_id,
+            "label": f"Seat {idx}",
+            "occupied": ss.status in (Status.OCCUPIED, Status.AWAY, Status.FLAGGED),
+            "has_person": ss.status == Status.OCCUPIED,
+            "coverage": round(ss.confidence, 4),
+            "matched_class": "person" if ss.status == Status.OCCUPIED else None,
+            "person_confidence": round(ss.confidence, 4),
+            "belongings": list(ss.belongings),
+            "state": ss.status.value,
+            "away_seconds": away_sec,
+        })
+
+    return status_list, len(tables)
+
+
 # ---------- 推論 ----------
 RELEVANT_CLASSES = {"person", "laptop", "dining table", "chair", "couch",
-                     "backpack", "book", "handbag", "suitcase", "cell phone"}
+                     "backpack", "book", "handbag", "suitcase", "cell phone", "bottle"}
 
 def run_inference(image_bgr, model_name, conf, iou, apply_rois=True):
     model = get_model(model_name)
@@ -420,16 +424,25 @@ def run_inference(image_bgr, model_name, conf, iou, apply_rois=True):
     # 座位狀態
     seat_status = []
     rois_used = None
+    table_count = 0
+    seat_mode = "none"
     if apply_rois:
         rois = load_rois()
         if rois.get("seats"):
+            # ROI mode — use annotated polygons
+            seat_mode = "roi"
             h, w = image_bgr.shape[:2]
             rois_scaled = scaled_rois(rois, w, h)
             seat_status = compute_seat_status(detections, rois_scaled, image_bgr.shape)
             annotated_bgr = draw_seat_overlay(annotated_bgr, rois_scaled, seat_status)
             rois_used = rois_scaled
+            table_count = stats.get("dining table", 0) or 1
+        else:
+            # Auto mode — use detected chairs as seats
+            seat_mode = "auto"
+            seat_status, table_count = auto_detect_seats(detections, image_bgr.shape)
 
-    return annotated_bgr, detections, stats, elapsed_ms, seat_status, rois_used
+    return annotated_bgr, detections, stats, elapsed_ms, seat_status, rois_used, table_count, seat_mode
 
 # ---------- Flask ----------
 app = Flask(__name__)
@@ -452,11 +465,36 @@ def bgr_to_data_url(image_bgr, fmt="jpeg", quality=90) -> str:
 # ---------- Routes: pages ----------
 @app.route("/")
 def index():
+    return redirect("/dashboard")
+
+@app.route("/detect")
+def detect_page():
     return render_template("index.html", models=list(AVAILABLE_MODELS.keys()))
 
 @app.route("/dashboard")
 def dashboard():
     return render_template("dashboard.html")
+
+
+# ---------- Routes: config ----------
+@app.route("/api/config/flag-threshold", methods=["GET"])
+def api_config_flag_threshold_get():
+    return jsonify({"T_flag": occupancy_engine.flag_threshold})
+
+
+@app.route("/api/config/flag-threshold", methods=["PUT"])
+def api_config_flag_threshold_put():
+    body = request.get_json(silent=True) or {}
+    try:
+        val = float(body.get("T_flag", 3600))
+    except (TypeError, ValueError):
+        return jsonify({"error": "T_flag must be a number"}), 400
+    occupancy_engine.set_flag_threshold(val)
+    actual = occupancy_engine.flag_threshold
+    cfg = load_config()
+    cfg["T_flag"] = actual
+    save_config(cfg)
+    return jsonify({"ok": True, "T_flag": actual})
 
 @app.route("/annotator")
 def annotator():
@@ -653,7 +691,7 @@ def api_detect():
         return jsonify({"error": "沒有收到有效圖片"}), 400
 
     try:
-        annotated_bgr, detections, stats, elapsed_ms, seat_status, rois_used = run_inference(
+        annotated_bgr, detections, stats, elapsed_ms, seat_status, rois_used, table_count, seat_mode = run_inference(
             image_bgr, model_name, conf, iou, apply_rois=True
         )
     except Exception as e:
@@ -664,18 +702,17 @@ def api_detect():
     chairs = stats.get("chair", 0) + stats.get("couch", 0)
     focus_stats = {k: v for k, v in stats.items() if k in LIBRARY_FOCUS}
 
-    # 座位指標（若有 ROI）
+    # 座位指標
     total_seats = len(seat_status)
     occupied = sum(1 for s in seat_status if s["occupied"])
     vacant = total_seats - occupied
     occupancy_rate = round(occupied / total_seats, 4) if total_seats > 0 else None
-    estimated_vacant_fallback = max(chairs - persons, 0) if chairs > 0 else None
 
     # 儲存標註圖
     result_id = uuid.uuid4().hex[:12]
     cv2.imwrite(str(RESULT_DIR / f"{result_id}.jpg"), annotated_bgr)
 
-    # 寫入歷史 DB（只在有定義 ROI 時記錄，否則只是噪音）
+    # 寫入歷史 DB
     if total_seats > 0 and request.args.get("nolog") != "1":
         try:
             log_detection_to_db(
@@ -704,10 +741,11 @@ def api_detect():
             "focus_stats": focus_stats,
             "persons": persons,
             "chairs_or_couches": chairs,
-            "estimated_vacant_seats": estimated_vacant_fallback,
         },
         "seats": {
             "defined": total_seats > 0,
+            "mode": seat_mode,
+            "tables": table_count,
             "total": total_seats,
             "occupied": occupied,
             "vacant": vacant,
@@ -776,7 +814,7 @@ def api_capture_detect():
         return jsonify({"error": "Camera fetch failed — check URL and connectivity"}), 502
 
     try:
-        annotated_bgr, detections, stats, elapsed_ms, seat_status, rois_used = run_inference(
+        annotated_bgr, detections, stats, elapsed_ms, seat_status, rois_used, table_count, seat_mode = run_inference(
             image_bgr, model_name, conf, iou, apply_rois=True
         )
     except Exception as e:
@@ -789,7 +827,6 @@ def api_capture_detect():
     occupied = sum(1 for s in seat_status if s["occupied"])
     vacant = total_seats - occupied
     occupancy_rate = round(occupied / total_seats, 4) if total_seats > 0 else None
-    estimated_vacant_fallback = max(chairs - persons, 0) if chairs > 0 else None
 
     result_id = uuid.uuid4().hex[:12]
     cv2.imwrite(str(RESULT_DIR / f"{result_id}.jpg"), annotated_bgr)
@@ -818,10 +855,11 @@ def api_capture_detect():
             "focus_stats": focus_stats,
             "persons": persons,
             "chairs_or_couches": chairs,
-            "estimated_vacant_seats": estimated_vacant_fallback,
         },
         "seats": {
             "defined": total_seats > 0,
+            "mode": seat_mode,
+            "tables": table_count,
             "total": total_seats,
             "occupied": occupied,
             "vacant": vacant,

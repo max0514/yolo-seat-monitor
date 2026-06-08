@@ -1,57 +1,114 @@
-# CONTRACT(模組)— occupancy
+# CONTRACT (module) — occupancy
 
-## 白話摘要(給不讀程式的協作者)
-這塊拿「YOLO 偵測到的人」加上「每個座位的 ROI」,判斷每個座位現在是不是有人。
-關鍵不是看單一畫面,而是看一段時間:要連續看到才算「有人」,要連續看不到一陣子才算「空」。
-這樣掉一幀、一張糊掉的畫面,都不會讓座位狀態亂跳。**產品準不準,主要看這塊。**
+## Plain-language summary
 
-## 公開介面(這是契約,改它要人類審)
+Takes "what YOLO saw" plus "where each seat is" and decides each seat's state. The key insight:
+don't trust a single frame. A person must be seen for multiple consecutive frames to count as
+"occupied." They must be gone for even more frames to count as "left." And when belongings
+remain after the person leaves, a configurable wall-clock timer runs — if the person doesn't
+return within T_flag seconds, the seat is flagged as potential illegal occupation.
+**This is where product accuracy lives (E3), not in YOLO.**
+
+## Public interface (changing this requires human review)
+
 ```python
 class OccupancyEngine:
+    def __init__(self, *, k_occ=2, k_emp=4, k_away=2,
+                 T_empty=30.0, T_flag=3600.0, T_unknown=60.0):
+        """
+        k_occ:    consecutive person-in-ROI frames to confirm OCCUPIED
+        k_emp:    consecutive no-person-no-belongings frames to confirm EMPTY
+        k_away:   consecutive no-person-but-belongings frames to confirm AWAY
+        T_empty:  minimum seconds since last person before allowing EMPTY transition
+        T_flag:   seconds in AWAY before escalating to FLAGGED (UI-configurable)
+        T_unknown: seconds of consecutive bad frames before UNKNOWN
+        """
+
     def update(
         self,
-        detections: list[Detection],   # 來自 inference,本幀
-        roi_set: list[Seat],           # 來自 roi
-        now: float,                    # 本幀時間戳(秒)
+        detections: list[Detection],
+        roi_set: list[Seat],
+        now: float,
     ) -> list[SeatState]:
-        """純函式 + 內部計數器。回傳本輪每個座位的狀態。"""
-```
-型別全部來自 `shared/seat-schema.contract.md`,本模組不得自定義。
+        """Pure computation + internal counters. Returns current state for every seat."""
 
-## 相依(只准讀這些)
-- `shared/seat-schema`:Detection、Seat、SeatState、Status
-- roi 模組提供的 `roi_set`
-
-**明確禁止:** 不准直接碰 DB、不准直接呼叫 YOLO、不准做任何網路 I/O。
-
-## 核心演算法
-1. **對應:** 對每個座位,判定哪些 detection 落在它的 ROI 內
-   (預設:detection bbox 中心點落在多邊形內;之後可換 IoU)。
-2. **遲滯 / 去抖(E2 的落實):**
-   - 座位翻成 `OCCUPIED`:需連續 `k_occ` 幀為正。
-   - 座位翻成 `EMPTY`:需連續 `k_emp` 幀為負,**且**距上次離開 OCCUPIED ≥ `T_empty` 秒。
-   - 起始參數:`k_occ = 2`、`k_emp = 4`、`T_empty = 30s`。
-   - **理由:** 誤判成「空」比慢一點報「空」糟得多(學生放包包暫時離開)。
-3. **壞幀 / 無資料:** 該輪沒有可信輸入時,維持原狀態並標 `confidence` 低;
-   連續 UNKNOWN 超過 `T_unknown` 才把狀態設為 `UNKNOWN`,不可直接設 EMPTY。
-
-## 狀態機(每座位一份)
-```
-EMPTY ──(連續 k_occ 正)──▶ OCCUPIED
-OCCUPIED ──(連續 k_emp 負 且 ≥ T_empty)──▶ EMPTY
-任一狀態 ──(連續壞幀 ≥ T_unknown)──▶ UNKNOWN ──(下次有可信判斷)──▶ 回對應狀態
+    def set_flag_threshold(self, seconds: float) -> None:
+        """Update T_flag at runtime (called when user changes the UI slider)."""
 ```
 
-## 保證(Invariants)
-- 給定相同的輸入序列,輸出完全可重現(deterministic)——這是 `replay` 模式能用的前提。
-- 純運算,無副作用、無 I/O。
-- 單幀的單一正 / 負偵測,不足以翻轉任何已穩定的狀態。
+Types come from `shared/seat-schema.contract.md`. This module must not redefine them.
 
-## AI 未經人類審不得更改
-- 上面的 `update` 簽名
-- 遲滯語意(k_occ / k_emp / T_empty 的「先正後負、非對稱」這個設計)
-- 任何來自 seat-schema 的型別
+## Dependencies (allow-list)
 
-## 契約測試
-本契約的可執行形式在 `tests/test_occupancy_contract.py`。
-改本模組後測試必須全綠;測試斷言不可為了通過而放寬。
+- `shared/seat-schema`: Status, Seat, Detection, SeatState
+- `roi_set` provided by caller (from ROI module)
+
+**Forbidden:** no direct DB access, no YOLO calls, no network I/O, no `datetime.now()`.
+Time comes in via the `now` parameter — this is what makes replay mode work (E4).
+
+## Core algorithm
+
+### 1. ROI matching
+
+For each seat, determine which detections fall within its ROI polygon.
+Default: detection bbox center-point inside polygon. (Upgradable to IoU later.)
+
+Classify per seat:
+- `has_person`: any "person" detection overlaps ROI above threshold
+- `belongings_found`: list of belonging-class detections overlapping ROI
+
+### 2. State machine (per seat)
+
+```
+EMPTY ──(k_occ consecutive has_person)──> OCCUPIED
+OCCUPIED ──(k_away consecutive !has_person + belongings)──> AWAY
+OCCUPIED ──(k_emp consecutive !has_person + !belongings, >= T_empty since last person)──> EMPTY
+AWAY ──(k_occ consecutive has_person)──> OCCUPIED
+AWAY ──(wall-clock >= T_flag since person_left_ts)──> FLAGGED
+AWAY ──(k_emp consecutive !has_person + !belongings)──> EMPTY
+FLAGGED ──(k_occ consecutive has_person)──> OCCUPIED
+FLAGGED ──(k_emp consecutive !has_person + !belongings)──> EMPTY
+Any ──(>= T_unknown seconds of bad/missing frames)──> UNKNOWN
+UNKNOWN ──(first credible frame)──> resume from last known state
+```
+
+### 3. Parameters
+
+| Param     | Default | Range        | Description                                        |
+|-----------|---------|--------------|----------------------------------------------------|
+| k_occ     | 2       | 1-10         | Frames to confirm person present                   |
+| k_emp     | 4       | 2-20         | Frames to confirm seat fully vacated               |
+| k_away    | 2       | 1-10         | Frames to confirm person left but belongings remain|
+| T_empty   | 30s     | 10-300s      | Min seconds before OCCUPIED->EMPTY allowed         |
+| T_flag    | 3600s   | 60-86400s    | Seconds in AWAY before FLAGGED (**UI-configurable**)|
+| T_unknown | 60s     | 10-600s      | Seconds of bad frames before UNKNOWN               |
+
+**T_flag is the only parameter exposed to the end-user via the dashboard UI.**
+All others are developer/config-level tuning.
+
+### 4. Bad frames / no data
+
+When a frame has no credible input (camera error, decode failure):
+- Maintain current state, do not flip.
+- Decrement confidence.
+- After T_unknown consecutive seconds of no credible data: transition to UNKNOWN.
+- UNKNOWN -> back to evaluation on next credible frame (do NOT default to EMPTY).
+
+## Guarantees (invariants)
+
+- **Deterministic:** same input sequence + same parameters = same output. Replay works.
+- **Pure computation:** no I/O, no side effects beyond internal counters.
+- **Single-frame resilience:** one positive or negative frame cannot flip a stable state.
+- **Asymmetric by design:** harder to go EMPTY than to go OCCUPIED — because "false empty"
+  (student's stuff still there) is worse than "slow to report empty."
+
+## AI may not change without human review
+
+- The `update()` / `set_flag_threshold()` signatures
+- The hysteresis semantics (k_occ/k_emp/k_away asymmetry, T_empty minimum delay)
+- The 5-state model and transition rules
+- Any types from seat-schema
+
+## Contract tests
+
+`tests/test_occupancy_contract.py` — executable form of this contract.

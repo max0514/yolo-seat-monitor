@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SEAT MONITOR — Dashboard</title>
+<title>Seat Monitor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -13,9 +13,11 @@
 :root {
   --bg: #0f1117;
   --card: #1a1d27;
+  --card-2: #21242f;
   --border: #2a2d3a;
   --text: #e0e0e8;
   --dim: #6b7084;
+  --mute: #3d4052;
   --green: #34d399;
   --green-bg: rgba(52,211,153,0.08);
   --green-border: rgba(52,211,153,0.25);
@@ -44,64 +46,62 @@ body {
 /* ── header ── */
 .header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 24px;
+  padding: 10px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--card);
   flex-shrink: 0;
 }
 .logo { display: flex; align-items: center; gap: 10px; }
-.logo h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.5px; }
-.logo .dot {
+.logo h1 { font-size: 14px; font-weight: 600; letter-spacing: 0.5px; }
+.dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--dim); transition: background 0.4s;
 }
-.logo .dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); }
-.logo .dot.err { background: var(--red); }
-.nav { display: flex; gap: 6px; }
+.dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.dot.err { background: var(--red); }
+.nav { display: flex; gap: 4px; }
 .nav a {
-  font-size: 12px; font-weight: 500; color: var(--dim); text-decoration: none;
-  padding: 5px 12px; border-radius: 6px; border: 1px solid transparent; transition: all 0.2s;
+  font-size: 11px; font-weight: 500; color: var(--dim); text-decoration: none;
+  padding: 4px 10px; border-radius: 6px; border: 1px solid transparent; transition: all 0.2s;
 }
 .nav a:hover { color: var(--text); border-color: var(--border); }
-.clock { font-size: 13px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.clock { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; margin-left: 8px; }
 
 /* ── main grid ── */
 .main {
   flex: 1; display: grid;
-  grid-template-columns: 1fr 480px;
+  grid-template-columns: 1fr 420px;
   min-height: 0;
 }
 
-/* ── left: visualization ── */
+/* ── left: seat visualization ── */
 .viz {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 32px; padding: 40px; position: relative;
+  gap: 24px; padding: 32px;
   background: radial-gradient(ellipse at center, #13161f 0%, var(--bg) 70%);
 }
 
 .scene { display: flex; flex-direction: column; align-items: center; gap: 0; }
-.persons { display: flex; gap: 60px; margin-bottom: -10px; z-index: 2; }
+.persons { display: flex; gap: 48px; margin-bottom: -8px; z-index: 2; }
 
 .person-slot {
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
   transition: all 0.5s;
 }
-
 .person-label {
-  font-size: 12px; font-weight: 600; letter-spacing: 1px; transition: color 0.5s;
+  font-size: 11px; font-weight: 600; letter-spacing: 1.5px; transition: color 0.5s;
 }
 
-/* person SVG */
 .person-figure {
-  width: 90px; height: 130px; position: relative; transition: all 0.5s ease;
+  width: 80px; height: 116px; position: relative; transition: all 0.5s ease;
 }
 .person-figure svg { width: 100%; height: 100%; transition: all 0.5s ease; }
 
-/* state colors for person */
-.person-slot[data-state="vacant"] .person-label { color: var(--green); }
-.person-slot[data-state="vacant"] .person-figure svg { opacity: 0.12; }
-.person-slot[data-state="vacant"] .body-fill { fill: var(--dim); }
-.person-slot[data-state="vacant"] .body-stroke { stroke: var(--dim); }
+/* state colors */
+.person-slot[data-state="empty"] .person-label { color: var(--green); }
+.person-slot[data-state="empty"] .person-figure svg { opacity: 0.12; }
+.person-slot[data-state="empty"] .body-fill { fill: var(--dim); }
+.person-slot[data-state="empty"] .body-stroke { stroke: var(--dim); }
 
 .person-slot[data-state="occupied"] .person-label { color: var(--red); }
 .person-slot[data-state="occupied"] .person-figure svg { opacity: 1; }
@@ -120,21 +120,22 @@ body {
 .person-slot[data-state="flagged"] .person-figure svg { opacity: 0.35; }
 .person-slot[data-state="flagged"] .body-fill { fill: var(--flag-red); }
 .person-slot[data-state="flagged"] .body-stroke { stroke: var(--flag-red); }
-.person-slot[data-state="flagged"] .person-figure {
-  animation: flash 1s ease-in-out infinite;
-}
-@keyframes flash {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
+.person-slot[data-state="flagged"] .person-figure { animation: flash 1s ease-in-out infinite; }
+
+.person-slot[data-state="unknown"] .person-label { color: var(--mute); }
+.person-slot[data-state="unknown"] .person-figure svg { opacity: 0.08; }
+.person-slot[data-state="unknown"] .body-fill { fill: var(--mute); }
+.person-slot[data-state="unknown"] .body-stroke { stroke: var(--mute); }
+
+@keyframes flash { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
 /* badge */
 .person-badge {
-  font-size: 11px; font-weight: 600; letter-spacing: 1.5px;
+  font-size: 10px; font-weight: 600; letter-spacing: 1.5px;
   padding: 3px 14px; border-radius: 20px; transition: all 0.5s;
-  text-align: center; min-width: 100px;
+  text-align: center; min-width: 90px;
 }
-.person-slot[data-state="vacant"] .person-badge {
+.person-slot[data-state="empty"] .person-badge {
   color: var(--green); background: var(--green-bg); border: 1px solid var(--green-border);
 }
 .person-slot[data-state="occupied"] .person-badge {
@@ -147,61 +148,69 @@ body {
   color: #fff; background: var(--flag-bg); border: 1px solid var(--flag-border);
   animation: flash 1s ease-in-out infinite;
 }
+.person-slot[data-state="unknown"] .person-badge {
+  color: var(--mute); background: rgba(61,64,82,0.2); border: 1px solid var(--mute);
+}
 
-/* away timer & belongings under badge */
+/* info under badge */
 .person-info {
   display: flex; flex-direction: column; align-items: center; gap: 3px;
-  min-height: 36px; margin-top: 2px;
+  min-height: 32px; margin-top: 2px;
 }
 .away-timer {
-  font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums;
+  font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums;
   transition: color 0.5s;
 }
 .person-slot[data-state="away"] .away-timer { color: var(--amber); }
 .person-slot[data-state="flagged"] .away-timer { color: var(--flag-red); }
-.belonging-tags {
-  display: flex; gap: 4px; flex-wrap: wrap; justify-content: center;
-}
+.belonging-tags { display: flex; gap: 3px; flex-wrap: wrap; justify-content: center; }
 .belonging-tag {
   font-size: 9px; padding: 1px 6px; border-radius: 3px;
-  background: rgba(255,255,255,0.06); color: var(--dim);
+  background: rgba(255,255,255,0.05); color: var(--dim);
   border: 1px solid var(--border);
+}
+
+/* tables row */
+.tables-row {
+  display: flex; gap: 32px; align-items: flex-end; justify-content: center; flex-wrap: wrap;
+}
+.table-group {
+  display: flex; flex-direction: column; align-items: center; gap: 0;
+}
+.seats-row {
+  display: flex; gap: 24px; margin-bottom: -8px; z-index: 2; justify-content: center;
+  flex-wrap: wrap;
 }
 
 /* table */
 .table-block {
-  width: 340px; height: 70px;
+  min-width: 140px; padding: 0 24px; height: 48px;
   background: linear-gradient(180deg, #3d3225 0%, #2c2418 100%);
-  border-radius: 10px; border: 1px solid #4a3d2e;
-  z-index: 1; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  border-radius: 8px; border: 1px solid #4a3d2e;
+  z-index: 1; box-shadow: 0 8px 20px rgba(0,0,0,0.4);
   display: flex; align-items: center; justify-content: center;
+  position: relative;
 }
-.table-block span { font-size: 11px; letter-spacing: 3px; color: rgba(255,255,255,0.1); font-weight: 500; }
-.table-block::before, .table-block::after {
-  content: ''; position: absolute; bottom: -18px;
-  width: 6px; height: 18px; background: #2c2418; border-radius: 0 0 3px 3px;
+.table-block span {
+  font-size: 10px; letter-spacing: 3px; color: rgba(255,255,255,0.08); font-weight: 500;
 }
-.table-block { position: relative; }
-.table-block::before { left: 30px; }
-.table-block::after { right: 30px; }
 
 /* banner */
 .banner { text-align: center; }
 .banner-count {
-  font-size: 56px; font-weight: 700; line-height: 1; transition: color 0.5s;
+  font-size: 48px; font-weight: 700; line-height: 1; transition: color 0.5s;
 }
 .banner-count.none { color: var(--green); }
 .banner-count.some { color: var(--amber); }
 .banner-count.full { color: var(--red); }
-.banner-sub { font-size: 13px; color: var(--dim); margin-top: 6px; letter-spacing: 1px; }
+.banner-sub { font-size: 12px; color: var(--dim); margin-top: 4px; letter-spacing: 1px; }
 
 /* flag alert */
 .flag-alert {
-  display: none; padding: 10px 20px; border-radius: 8px;
+  display: none; padding: 8px 18px; border-radius: 8px;
   background: var(--flag-bg); border: 1px solid var(--flag-border);
-  color: var(--flag-red); font-size: 13px; font-weight: 600;
-  text-align: center; letter-spacing: 0.5px;
-  animation: flash 1.5s ease-in-out infinite;
+  color: var(--flag-red); font-size: 12px; font-weight: 600;
+  text-align: center; animation: flash 1.5s ease-in-out infinite;
 }
 .flag-alert.show { display: block; }
 
@@ -210,26 +219,32 @@ body {
   border-left: 1px solid var(--border); background: var(--card);
   display: flex; flex-direction: column; overflow-y: auto;
 }
-.section { padding: 18px 20px; border-bottom: 1px solid var(--border); }
+.section { padding: 14px 16px; border-bottom: 1px solid var(--border); }
 .section-title {
-  font-size: 11px; font-weight: 600; color: var(--dim);
-  letter-spacing: 1.5px; margin-bottom: 12px;
+  font-size: 10px; font-weight: 600; color: var(--dim);
+  letter-spacing: 1.5px; margin-bottom: 10px;
 }
 
+/* camera */
 .cam-box {
-  width: 100%; aspect-ratio: 4/3; border-radius: 8px; overflow: hidden;
-  background: #000; border: 1px solid var(--border); position: relative; min-height: 300px;
+  width: 100%; aspect-ratio: 4/3; border-radius: 6px; overflow: hidden;
+  background: #000; border: 1px solid var(--border); position: relative; min-height: 260px;
 }
 .cam-box img { width: 100%; height: 100%; object-fit: contain; display: none; }
 .cam-box .placeholder {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font-size: 12px; color: var(--dim);
+  font-size: 11px; color: var(--dim);
 }
-
-.controls { display: flex; gap: 6px; margin-top: 10px; }
+.cam-url {
+  width: 100%; font-family: var(--font); font-size: 11px; padding: 6px 8px; margin-top: 6px;
+  background: rgba(0,0,0,0.3); color: var(--text); border: 1px solid var(--border); border-radius: 4px;
+  outline: none;
+}
+.cam-url:focus { border-color: var(--green); }
+.controls { display: flex; gap: 4px; margin-top: 6px; }
 .btn {
-  flex: 1; padding: 8px 0; font-family: var(--font); font-size: 12px; font-weight: 600;
-  border: 1px solid var(--border); border-radius: 6px; background: transparent;
+  flex: 1; padding: 7px 0; font-family: var(--font); font-size: 11px; font-weight: 600;
+  border: 1px solid var(--border); border-radius: 4px; background: transparent;
   color: var(--text); cursor: pointer; transition: all 0.15s;
 }
 .btn:hover { background: rgba(255,255,255,0.04); }
@@ -237,22 +252,55 @@ body {
 .btn:disabled:hover { background: transparent; }
 .btn.active { border-color: var(--green); color: var(--green); background: var(--green-bg); }
 
-.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* stats */
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .stat {
-  background: rgba(0,0,0,0.25); border-radius: 8px; padding: 12px;
+  background: rgba(0,0,0,0.25); border-radius: 6px; padding: 10px;
   border: 1px solid var(--border);
 }
-.stat-label { font-size: 10px; color: var(--dim); letter-spacing: 1px; font-weight: 500; }
-.stat-val { font-size: 24px; font-weight: 700; margin-top: 2px; }
+.stat-label { font-size: 9px; color: var(--dim); letter-spacing: 1px; font-weight: 500; }
+.stat-val { font-size: 22px; font-weight: 700; margin-top: 2px; }
 
+/* flag threshold control */
+.flag-control { margin-top: 4px; }
+.flag-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.flag-slider {
+  flex: 1; -webkit-appearance: none; appearance: none;
+  height: 4px; background: var(--border); border-radius: 2px; outline: none;
+}
+.flag-slider::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px;
+  background: var(--amber); border-radius: 50%; cursor: pointer;
+  border: 2px solid var(--bg);
+}
+.flag-slider::-moz-range-thumb {
+  width: 14px; height: 14px; background: var(--amber);
+  border-radius: 50%; cursor: pointer; border: 2px solid var(--bg);
+}
+.flag-value {
+  font-size: 13px; font-weight: 600; color: var(--amber);
+  min-width: 60px; text-align: right; font-variant-numeric: tabular-nums;
+}
+.flag-hint {
+  font-size: 9px; color: var(--mute); margin-top: 4px; letter-spacing: 0.3px;
+}
+
+/* log */
 .log {
-  flex: 1; font-size: 11px; line-height: 1.9; color: var(--dim);
-  overflow-y: auto; max-height: 180px;
+  flex: 1; font-size: 10px; line-height: 1.8; color: var(--dim);
+  overflow-y: auto; max-height: 160px;
 }
 .log .ts { color: var(--green); }
 .log .hi { color: var(--text); }
 .log .warn { color: var(--amber); }
 .log .danger { color: var(--flag-red); font-weight: 600; }
+
+@media (max-width: 900px) {
+  .main { grid-template-columns: 1fr; }
+  .viz { min-height: 400px; }
+}
 </style>
 </head>
 <body>
@@ -264,61 +312,30 @@ body {
     <span class="clock" id="clock">--:--:--</span>
   </div>
   <nav class="nav">
-    <a href="/">Detector</a>
+    <a href="/detect">Detector</a>
     <a href="/annotator">Annotate</a>
     <a href="/history">History</a>
   </nav>
 </header>
 
 <main class="main">
-
   <div class="viz">
-    <div class="scene">
-      <div class="persons">
-
-        <div class="person-slot" data-state="vacant" id="slot-a">
-          <span class="person-label">SEAT A</span>
-          <div class="person-figure">
-            <svg viewBox="0 0 80 120" fill="none">
-              <circle cx="40" cy="22" r="16" class="body-fill body-stroke" stroke-width="2"/>
-              <path d="M12 120 C12 75, 14 55, 40 48 C66 55, 68 75, 68 120" class="body-fill body-stroke" stroke-width="2"/>
-              <path d="M8 90 Q10 70, 40 60 Q70 70, 72 90" class="body-stroke" stroke-width="2" fill="none"/>
-            </svg>
-          </div>
-          <span class="person-badge" id="badge-a">VACANT</span>
-          <div class="person-info">
-            <span class="away-timer" id="timer-a"></span>
-            <div class="belonging-tags" id="belong-a"></div>
-          </div>
+    <div class="scene" id="scene">
+      <div class="tables-row" id="tables-row">
+        <div class="table-group">
+          <div class="seats-row" id="default-seats"></div>
+          <div class="table-block"><span>TABLE</span></div>
         </div>
-
-        <div class="person-slot" data-state="vacant" id="slot-b">
-          <span class="person-label">SEAT B</span>
-          <div class="person-figure">
-            <svg viewBox="0 0 80 120" fill="none">
-              <circle cx="40" cy="22" r="16" class="body-fill body-stroke" stroke-width="2"/>
-              <path d="M12 120 C12 75, 14 55, 40 48 C66 55, 68 75, 68 120" class="body-fill body-stroke" stroke-width="2"/>
-              <path d="M8 90 Q10 70, 40 60 Q70 70, 72 90" class="body-stroke" stroke-width="2" fill="none"/>
-            </svg>
-          </div>
-          <span class="person-badge" id="badge-b">VACANT</span>
-          <div class="person-info">
-            <span class="away-timer" id="timer-b"></span>
-            <div class="belonging-tags" id="belong-b"></div>
-          </div>
-        </div>
-
       </div>
-      <div class="table-block"><span>TABLE</span></div>
     </div>
 
     <div class="banner">
-      <div class="banner-count none" id="banner-count">0 / 2</div>
+      <div class="banner-count none" id="banner-count">0 / 0</div>
       <div class="banner-sub">SEATS OCCUPIED</div>
     </div>
 
     <div class="flag-alert" id="flag-alert">
-      &#x26A0; ILLEGAL OCCUPATION DETECTED — belongings left unattended
+      &#x26A0; ILLEGAL OCCUPATION DETECTED
     </div>
   </div>
 
@@ -329,9 +346,7 @@ body {
         <div class="placeholder" id="cam-ph">No feed</div>
         <img id="cam-img" alt="">
       </div>
-      <input type="text" id="cam-url-input" placeholder="http://YOUR_ESP32_IP/capture"
-             style="width:100%;font-family:var(--font);font-size:11px;padding:6px 8px;margin-top:8px;
-                    background:rgba(0,0,0,0.3);color:var(--text);border:1px solid var(--border);border-radius:6px;">
+      <input type="text" id="cam-url" class="cam-url" placeholder="http://ESP32_IP/capture">
       <div class="controls">
         <button class="btn" id="btn-snap">Snap</button>
         <button class="btn" id="btn-live">Live</button>
@@ -361,6 +376,18 @@ body {
       </div>
     </div>
 
+    <div class="section">
+      <div class="section-title">FLAG THRESHOLD</div>
+      <div class="flag-control">
+        <div class="flag-row">
+          <input type="range" class="flag-slider" id="t-flag-slider"
+                 min="1" max="1440" step="1" value="60">
+          <span class="flag-value" id="t-flag-display">1h 00m</span>
+        </div>
+        <div class="flag-hint">Time before unattended belongings are flagged</div>
+      </div>
+    </div>
+
     <div class="section" style="flex:1;">
       <div class="section-title">LOG</div>
       <div class="log" id="log"></div>
@@ -370,20 +397,19 @@ body {
 
 <script>
 const $ = id => document.getElementById(id);
-// Set camera URL via query param: ?cam=http://192.168.1.100/capture
-const defaultCam = new URLSearchParams(location.search).get("cam") || "";
+const defaultCam = new URLSearchParams(location.search).get("cam") || "http://172.20.10.3/capture";
 let liveTimer = null, busy = false, scans = 0;
+let seatSlots = {};  // seat_id -> { slot, badge, timer, belong }
+let prevStates = {};
+let totalSeats = 0;
 
-function getCamURL() {
-  return ($('cam-url-input').value || '').trim();
-}
-let prevStates = { a: null, b: null };
-
+// Clock
 setInterval(() => {
   const d = new Date(), p = n => String(n).padStart(2,'0');
   $('clock').textContent = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }, 1000);
 
+// Log
 function log(msg) {
   const el = document.createElement('div');
   const d = new Date(), p = n => String(n).padStart(2,'0');
@@ -392,6 +418,7 @@ function log(msg) {
   while ($('log').children.length > 50) $('log').removeChild($('log').lastChild);
 }
 
+// Format time
 function fmtTime(sec) {
   if (sec == null) return '';
   const h = Math.floor(sec / 3600);
@@ -402,69 +429,147 @@ function fmtTime(sec) {
   return `${s}s`;
 }
 
+// Format T_flag minutes
+function fmtMinutes(min) {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2,'0')}m`;
+  return `${m}m`;
+}
+
+// Person SVG template
+const PERSON_SVG = `<svg viewBox="0 0 80 120" fill="none">
+  <circle cx="40" cy="22" r="16" class="body-fill body-stroke" stroke-width="2"/>
+  <path d="M12 120 C12 75, 14 55, 40 48 C66 55, 68 75, 68 120" class="body-fill body-stroke" stroke-width="2"/>
+  <path d="M8 90 Q10 70, 40 60 Q70 70, 72 90" class="body-stroke" stroke-width="2" fill="none"/>
+</svg>`;
+
 const BADGE_TEXT = {
-  vacant: 'VACANT',
-  occupied: 'OCCUPIED',
-  away: 'AWAY',
-  flagged: '⚠ FLAGGED',
+  empty: 'VACANT', occupied: 'OCCUPIED', away: 'AWAY',
+  flagged: '⚠ FLAGGED', unknown: 'NO SIGNAL',
 };
 
-function setSeat(id, seatData) {
-  const state = seatData.state || 'vacant';
-  const slot = $('slot-' + id);
-  const badge = $('badge-' + id);
-  const timer = $('timer-' + id);
-  const belong = $('belong-' + id);
+// Build the scene: tables + seats, dynamically from detection data
+function buildScene(statuses, tableCount) {
+  const ids = statuses.map(s => s.id);
+  const key = ids.join(',') + '|' + tableCount;
+  const row = $('tables-row');
+  if (row.dataset.sceneKey === key) return;
+  row.dataset.sceneKey = key;
+  row.innerHTML = '';
+  seatSlots = {};
+  prevStates = {};
+  totalSeats = statuses.length;
 
-  slot.setAttribute('data-state', state);
-  badge.textContent = BADGE_TEXT[state] || state.toUpperCase();
+  if (statuses.length === 0 && tableCount === 0) {
+    row.innerHTML = '<div class="table-group"><div class="seats-row"></div><div class="table-block"><span>NO SEATS DETECTED</span></div></div>';
+    return;
+  }
+
+  // Distribute seats across tables
+  const nTables = Math.max(tableCount, 1);
+  const groups = Array.from({length: nTables}, () => []);
+  statuses.forEach((s, i) => groups[i % nTables].push(s));
+
+  groups.forEach((seats, gi) => {
+    const group = document.createElement('div');
+    group.className = 'table-group';
+
+    // Seats row
+    const seatsRow = document.createElement('div');
+    seatsRow.className = 'seats-row';
+    seats.forEach(s => {
+      const slot = document.createElement('div');
+      slot.className = 'person-slot';
+      slot.setAttribute('data-state', 'empty');
+      slot.innerHTML = `
+        <span class="person-label">${escHtml(s.label || s.id)}</span>
+        <div class="person-figure">${PERSON_SVG}</div>
+        <span class="person-badge">VACANT</span>
+        <div class="person-info">
+          <span class="away-timer"></span>
+          <div class="belonging-tags"></div>
+        </div>`;
+      seatsRow.appendChild(slot);
+      seatSlots[s.id] = {
+        slot,
+        badge: slot.querySelector('.person-badge'),
+        timer: slot.querySelector('.away-timer'),
+        belong: slot.querySelector('.belonging-tags'),
+      };
+    });
+    group.appendChild(seatsRow);
+
+    // Table block
+    const table = document.createElement('div');
+    table.className = 'table-block';
+    // Scale table width based on number of seats
+    const w = Math.max(140, seats.length * 80 + 40);
+    table.style.width = w + 'px';
+    table.innerHTML = `<span>TABLE${nTables > 1 ? ' ' + (gi+1) : ''}</span>`;
+    group.appendChild(table);
+
+    row.appendChild(group);
+  });
+}
+
+function escHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Update one seat
+function setSeat(seatData) {
+  const id = seatData.id;
+  const state = seatData.state || 'empty';
+  const el = seatSlots[id];
+  if (!el) return;
+
+  el.slot.setAttribute('data-state', state);
+  el.badge.textContent = BADGE_TEXT[state] || state.toUpperCase();
 
   // timer
   if ((state === 'away' || state === 'flagged') && seatData.away_seconds != null) {
-    timer.textContent = fmtTime(seatData.away_seconds);
+    el.timer.textContent = fmtTime(seatData.away_seconds);
   } else {
-    timer.textContent = '';
+    el.timer.textContent = '';
   }
 
   // belongings
   const items = seatData.belongings || [];
-  belong.innerHTML = items.map(b => `<span class="belonging-tag">${b}</span>`).join('');
+  el.belong.innerHTML = items.map(b => `<span class="belonging-tag">${escHtml(b)}</span>`).join('');
 
   // log state changes
   if (prevStates[id] !== state) {
+    const label = seatData.label || id;
     if (state === 'away') {
       const itemStr = items.length ? ` (${items.join(', ')})` : '';
-      log(`<span class="warn">Seat ${id.toUpperCase()}: person left, belongings remain${itemStr}</span>`);
+      log(`<span class="warn">${escHtml(label)}: person left, belongings remain${itemStr}</span>`);
     } else if (state === 'flagged') {
-      log(`<span class="danger">⚠ Seat ${id.toUpperCase()}: FLAGGED — unattended belongings > 1h</span>`);
-    } else if (state === 'occupied' && prevStates[id] === 'away') {
-      log(`<span class="hi">Seat ${id.toUpperCase()}: person returned</span>`);
-    } else if (state === 'occupied' && prevStates[id] === 'flagged') {
-      log(`<span class="hi">Seat ${id.toUpperCase()}: person returned, flag cleared</span>`);
-    } else if (state === 'vacant' && (prevStates[id] === 'away' || prevStates[id] === 'flagged')) {
-      log(`<span class="hi">Seat ${id.toUpperCase()}: belongings removed, now vacant</span>`);
+      log(`<span class="danger">⚠ ${escHtml(label)}: FLAGGED</span>`);
+    } else if (state === 'occupied' && (prevStates[id] === 'away' || prevStates[id] === 'flagged')) {
+      log(`<span class="hi">${escHtml(label)}: person returned</span>`);
+    } else if (state === 'empty' && prevStates[id] && prevStates[id] !== 'empty') {
+      log(`<span class="hi">${escHtml(label)}: now vacant</span>`);
     }
     prevStates[id] = state;
   }
 }
 
-function updateBanner(seatStatuses) {
-  const occ = seatStatuses.filter(s => s.state !== 'vacant').length;
+function updateBanner(statuses) {
+  const occ = statuses.filter(s => s.state !== 'empty' && s.state !== 'unknown').length;
   const el = $('banner-count');
-  el.textContent = `${occ} / 2`;
+  el.textContent = `${occ} / ${totalSeats}`;
   el.classList.remove('none','some','full');
-  el.classList.add(occ === 0 ? 'none' : occ >= 2 ? 'full' : 'some');
-
-  const hasFlag = seatStatuses.some(s => s.state === 'flagged');
-  $('flag-alert').classList.toggle('show', hasFlag);
+  el.classList.add(occ === 0 ? 'none' : occ >= totalSeats ? 'full' : 'some');
+  $('flag-alert').classList.toggle('show', statuses.some(s => s.state === 'flagged'));
 }
+
+// Camera
+function getCamURL() { return ($('cam-url').value || '').trim(); }
 
 async function capture(silent) {
   if (busy) return;
-  if (!getCamURL()) {
-    log('<span class="danger">Enter a camera URL first</span>');
-    return;
-  }
+  if (!getCamURL()) { log('<span class="danger">Enter a camera URL</span>'); return; }
   busy = true;
   $('status-dot').className = 'dot';
 
@@ -482,38 +587,37 @@ async function capture(silent) {
     $('cam-ph').style.display = 'none';
 
     const seats = d.seats;
-    const persons = d.library.persons;
-
-    if (seats.defined && seats.status.length >= 2) {
-      setSeat('a', seats.status[0]);
-      setSeat('b', seats.status[1]);
+    const tableCount = seats.tables || 0;
+    if (seats.defined && seats.status.length > 0) {
+      buildScene(seats.status, tableCount);
+      seats.status.forEach(s => setSeat(s));
       updateBanner(seats.status);
-    } else if (seats.defined && seats.status.length === 1) {
-      setSeat('a', seats.status[0]);
-      setSeat('b', { state: 'vacant', belongings: [] });
-      updateBanner(seats.status);
-    } else {
-      const occ = Math.min(persons, 2);
-      setSeat('a', { state: occ >= 1 ? 'occupied' : 'vacant', belongings: [] });
-      setSeat('b', { state: occ >= 2 ? 'occupied' : 'vacant', belongings: [] });
-      updateBanner([{ state: occ >= 1 ? 'occupied' : 'vacant' }, { state: occ >= 2 ? 'occupied' : 'vacant' }]);
+    } else if (d.stats && (d.stats['chair'] || d.stats['couch'] || d.stats['dining table'])) {
+      // Detected furniture but no seat status — show empty scene
+      const nChairs = (d.stats['chair'] || 0) + (d.stats['couch'] || 0);
+      const nTables = d.stats['dining table'] || 0;
+      if (nChairs > 0) {
+        const mockSeats = Array.from({length: nChairs}, (_, i) => ({
+          id: `empty-${i+1}`, label: `Seat ${i+1}`, state: 'empty', belongings: []
+        }));
+        buildScene(mockSeats, nTables || 1);
+        mockSeats.forEach(s => setSeat(s));
+        updateBanner(mockSeats);
+      }
     }
 
     scans++;
-    $('s-persons').textContent = persons;
-    const rate = seats.defined && seats.occupancy_rate !== null
-      ? (seats.occupancy_rate * 100).toFixed(0) + '%'
-      : (Math.min(persons,2) * 50) + '%';
-    $('s-rate').textContent = rate;
+    $('s-persons').textContent = d.library.persons;
+    $('s-rate').textContent = seats.defined && seats.occupancy_rate !== null
+      ? (seats.occupancy_rate * 100).toFixed(0) + '%' : '--';
     $('s-latency').textContent = d.elapsed_ms.toFixed(0) + 'ms';
     $('s-scans').textContent = scans;
     $('status-dot').className = 'dot live';
 
-    if (!silent) log(`<span class="hi">${persons} person(s)</span> · ${d.elapsed_ms.toFixed(0)}ms`);
-
+    if (!silent) log(`<span class="hi">${d.library.persons} person(s)</span> · ${d.elapsed_ms.toFixed(0)}ms`);
   } catch (e) {
     $('status-dot').className = 'dot err';
-    log(`<span class="danger">Error:</span> ${e.message}`);
+    log(`<span class="danger">Error:</span> ${escHtml(e.message)}`);
   } finally {
     busy = false;
   }
@@ -539,11 +643,50 @@ $('btn-stop').onclick = () => {
   $('status-dot').className = 'dot';
 };
 
-// init cam URL from query param
-$('cam-url-input').value = defaultCam;
+// Flag threshold control
+const flagSlider = $('t-flag-slider');
+const flagDisplay = $('t-flag-display');
+let flagDebounce = null;
 
+flagSlider.addEventListener('input', () => {
+  flagDisplay.textContent = fmtMinutes(parseInt(flagSlider.value));
+});
+flagSlider.addEventListener('change', () => {
+  clearTimeout(flagDebounce);
+  flagDebounce = setTimeout(async () => {
+    const minutes = parseInt(flagSlider.value);
+    const seconds = minutes * 60;
+    try {
+      const res = await fetch('/api/config/flag-threshold', {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({T_flag: seconds}),
+      });
+      const d = await res.json();
+      if (d.ok) {
+        log(`Flag threshold set to <span class="warn">${fmtMinutes(minutes)}</span>`);
+      }
+    } catch (e) {
+      log(`<span class="danger">Failed to update threshold</span>`);
+    }
+  }, 300);
+});
+
+// Load initial T_flag from server
+async function loadFlagThreshold() {
+  try {
+    const res = await fetch('/api/config/flag-threshold');
+    const d = await res.json();
+    const minutes = Math.round(d.T_flag / 60);
+    flagSlider.value = minutes;
+    flagDisplay.textContent = fmtMinutes(minutes);
+  } catch (e) { /* use default */ }
+}
+
+// Init
+$('cam-url').value = defaultCam;
+loadFlagThreshold();
 log('Dashboard ready');
-log('States: <span class="hi">occupied</span> · <span class="warn">away</span> · <span class="danger">flagged (>1h)</span> · vacant');
 </script>
 </body>
 </html>

@@ -1,68 +1,186 @@
 """
-occupancy 模組的契約測試 —— 規格的「可執行形式」。
+occupancy contract tests — executable form of contracts/occupancy.contract.md
 
-這些測試就是 contracts/occupancy.contract.md 的可驗證版本:
-它們鎖住「人讀規格時理解的行為」。實作要去符合它們,而不是反過來改它們。
+These tests lock the behavior a human reads in the contract. The implementation
+must conform to them. Assertions must never be weakened to pass.
 
-跑法:  pytest tests/test_occupancy_contract.py -v
+Run:  pytest tests/test_occupancy_contract.py -v
 """
 import pytest
 
-# 型別來自脊椎,實作來自 occupancy 模組(路徑依你的 repo 調整)
 from shared.seat_schema import Seat, Detection, Status
 from occupancy.engine import OccupancyEngine
 
 
-# ---- 測試輔助 ----------------------------------------------------------
+# ---- helpers ---------------------------------------------------------------
 
-SEAT = Seat(id="F2-A07", label="2F 靠窗 A07", zone="2F",
-            roi_polygon=[(0.4, 0.4), (0.6, 0.4), (0.6, 0.6), (0.4, 0.6)])
+SEAT = Seat(
+    id="A", label="Seat A", zone="main",
+    roi_polygon=[(0.4, 0.4), (0.6, 0.4), (0.6, 0.6), (0.4, 0.6)],
+)
 
 def person_in_roi(ts: float) -> Detection:
-    # 中心 (0.5, 0.5) 落在 SEAT 的 ROI 內
-    return Detection(bbox=(0.45, 0.45, 0.55, 0.55), confidence=0.9, cls="person", frame_ts=ts)
+    """Person bbox centered at (0.5, 0.5) — inside SEAT's ROI."""
+    return Detection(bbox=(0.45, 0.45, 0.55, 0.55), confidence=0.9,
+                     cls="person", frame_ts=ts)
 
 def person_outside_roi(ts: float) -> Detection:
-    return Detection(bbox=(0.0, 0.0, 0.1, 0.1), confidence=0.9, cls="person", frame_ts=ts)
+    """Person bbox at top-left corner — outside SEAT's ROI."""
+    return Detection(bbox=(0.0, 0.0, 0.1, 0.1), confidence=0.9,
+                     cls="person", frame_ts=ts)
 
-def status_of(states, seat_id):
+def laptop_in_roi(ts: float) -> Detection:
+    """Laptop bbox centered at (0.5, 0.5) — inside SEAT's ROI."""
+    return Detection(bbox=(0.46, 0.46, 0.54, 0.54), confidence=0.85,
+                     cls="laptop", frame_ts=ts)
+
+def status_of(states, seat_id="A"):
     return next(s.status for s in states if s.seat_id == seat_id)
 
+def state_of(states, seat_id="A"):
+    return next(s for s in states if s.seat_id == seat_id)
 
-# ---- 契約行為 ----------------------------------------------------------
+
+# ---- hysteresis (E2) -------------------------------------------------------
 
 def test_single_positive_frame_does_not_flip_to_occupied():
-    """E2:單一幀偵測到人,不足以判定占用(需連續 k_occ=2)。"""
+    """E2: one frame with person is not enough (need k_occ=2 consecutive)."""
     eng = OccupancyEngine()
     states = eng.update([person_in_roi(0.0)], [SEAT], now=0.0)
-    assert status_of(states, "F2-A07") != Status.OCCUPIED
+    assert status_of(states) != Status.OCCUPIED
+
 
 def test_k_consecutive_positive_frames_flips_to_occupied():
-    """連續 k_occ 幀為正 → OCCUPIED。"""
+    """k_occ=2 consecutive person-in-ROI frames -> OCCUPIED."""
     eng = OccupancyEngine()
     eng.update([person_in_roi(0.0)], [SEAT], now=0.0)
     states = eng.update([person_in_roi(1.0)], [SEAT], now=1.0)
-    assert status_of(states, "F2-A07") == Status.OCCUPIED
+    assert status_of(states) == Status.OCCUPIED
+
 
 def test_single_dropped_frame_does_not_flip_to_empty():
-    """E2 的核心保證:已占用時,掉一幀(看不到人)不可立刻翻成 EMPTY。"""
+    """E2 core guarantee: once OCCUPIED, one missing frame must not flip to EMPTY."""
     eng = OccupancyEngine()
     eng.update([person_in_roi(0.0)], [SEAT], now=0.0)
-    eng.update([person_in_roi(1.0)], [SEAT], now=1.0)   # 已 OCCUPIED
-    states = eng.update([], [SEAT], now=2.0)             # 掉一幀
-    assert status_of(states, "F2-A07") == Status.OCCUPIED
+    eng.update([person_in_roi(1.0)], [SEAT], now=1.0)  # now OCCUPIED
+    states = eng.update([], [SEAT], now=2.0)            # dropped frame
+    assert status_of(states) == Status.OCCUPIED
+
+
+# ---- ROI boundary (E3) ----------------------------------------------------
 
 def test_detection_outside_roi_is_ignored():
-    """走道上的人(ROI 外)不算占用(E3)。"""
+    """E3: person outside the ROI polygon does not count as occupying the seat."""
     eng = OccupancyEngine()
     eng.update([person_outside_roi(0.0)], [SEAT], now=0.0)
     states = eng.update([person_outside_roi(1.0)], [SEAT], now=1.0)
-    assert status_of(states, "F2-A07") != Status.OCCUPIED
+    assert status_of(states) != Status.OCCUPIED
+
+
+# ---- AWAY transition -------------------------------------------------------
+
+def test_person_leaves_with_belongings_transitions_to_away():
+    """OCCUPIED -> AWAY when person gone but belongings detected (after k_away frames)."""
+    eng = OccupancyEngine(k_away=2)
+    # Establish OCCUPIED
+    eng.update([person_in_roi(0.0)], [SEAT], now=0.0)
+    eng.update([person_in_roi(1.0)], [SEAT], now=1.0)  # OCCUPIED
+    # Person leaves, laptop remains — k_away=2 frames
+    eng.update([laptop_in_roi(2.0)], [SEAT], now=2.0)
+    states = eng.update([laptop_in_roi(3.0)], [SEAT], now=3.0)
+    assert status_of(states) == Status.AWAY
+
+
+def test_away_records_belongings():
+    """When AWAY, the SeatState must list detected belonging classes."""
+    eng = OccupancyEngine(k_away=2)
+    eng.update([person_in_roi(0.0)], [SEAT], now=0.0)
+    eng.update([person_in_roi(1.0)], [SEAT], now=1.0)
+    eng.update([laptop_in_roi(2.0)], [SEAT], now=2.0)
+    states = eng.update([laptop_in_roi(3.0)], [SEAT], now=3.0)
+    s = state_of(states)
+    assert "laptop" in s.belongings
+
+
+def test_away_records_person_left_ts():
+    """When AWAY, person_left_ts must be set to when the person was last seen leaving."""
+    eng = OccupancyEngine(k_away=2)
+    eng.update([person_in_roi(0.0)], [SEAT], now=0.0)
+    eng.update([person_in_roi(1.0)], [SEAT], now=1.0)  # last seen at 1.0
+    eng.update([laptop_in_roi(2.0)], [SEAT], now=2.0)
+    states = eng.update([laptop_in_roi(3.0)], [SEAT], now=3.0)
+    s = state_of(states)
+    assert s.person_left_ts is not None
+
+
+# ---- FLAGGED transition ----------------------------------------------------
+
+def test_away_escalates_to_flagged_after_t_flag():
+    """AWAY -> FLAGGED when wall-clock time exceeds T_flag."""
+    eng = OccupancyEngine(k_away=1, T_flag=60.0)
+    eng.update([person_in_roi(0.0)], [SEAT], now=0.0)
+    eng.update([person_in_roi(1.0)], [SEAT], now=1.0)  # OCCUPIED
+    eng.update([laptop_in_roi(2.0)], [SEAT], now=2.0)   # AWAY (k_away=1)
+    # Jump forward past T_flag
+    states = eng.update([laptop_in_roi(70.0)], [SEAT], now=70.0)
+    assert status_of(states) == Status.FLAGGED
+
+
+def test_flagged_clears_when_person_returns():
+    """FLAGGED -> OCCUPIED when person comes back (after k_occ frames)."""
+    eng = OccupancyEngine(k_away=1, k_occ=2, T_flag=60.0)
+    eng.update([person_in_roi(0.0)], [SEAT], now=0.0)
+    eng.update([person_in_roi(1.0)], [SEAT], now=1.0)
+    eng.update([laptop_in_roi(2.0)], [SEAT], now=2.0)
+    eng.update([laptop_in_roi(70.0)], [SEAT], now=70.0)  # FLAGGED
+    # Person returns
+    eng.update([person_in_roi(71.0), laptop_in_roi(71.0)], [SEAT], now=71.0)
+    states = eng.update([person_in_roi(72.0), laptop_in_roi(72.0)], [SEAT], now=72.0)
+    assert status_of(states) == Status.OCCUPIED
+
+
+def test_flagged_to_empty_when_belongings_removed():
+    """FLAGGED -> EMPTY when belongings are cleared (after k_emp frames, no person)."""
+    eng = OccupancyEngine(k_away=1, k_emp=2, T_flag=60.0, T_empty=0.0)
+    eng.update([person_in_roi(0.0)], [SEAT], now=0.0)
+    eng.update([person_in_roi(1.0)], [SEAT], now=1.0)
+    eng.update([laptop_in_roi(2.0)], [SEAT], now=2.0)
+    eng.update([laptop_in_roi(70.0)], [SEAT], now=70.0)  # FLAGGED
+    # Belongings removed — k_emp=2 empty frames
+    eng.update([], [SEAT], now=71.0)
+    states = eng.update([], [SEAT], now=72.0)
+    assert status_of(states) == Status.EMPTY
+
+
+# ---- set_flag_threshold ----------------------------------------------------
+
+def test_set_flag_threshold_changes_t_flag():
+    """set_flag_threshold updates T_flag for subsequent evaluations."""
+    eng = OccupancyEngine(k_away=1, T_flag=3600.0)
+    eng.update([person_in_roi(0.0)], [SEAT], now=0.0)
+    eng.update([person_in_roi(1.0)], [SEAT], now=1.0)
+    eng.update([laptop_in_roi(2.0)], [SEAT], now=2.0)  # AWAY
+
+    # At t=100, still AWAY (T_flag=3600 not reached)
+    states = eng.update([laptop_in_roi(100.0)], [SEAT], now=100.0)
+    assert status_of(states) == Status.AWAY
+
+    # Lower threshold to 60s
+    eng.set_flag_threshold(60.0)
+
+    # Now at t=100 (>60s since away started), should escalate
+    states = eng.update([laptop_in_roi(101.0)], [SEAT], now=101.0)
+    assert status_of(states) == Status.FLAGGED
+
+
+# ---- determinism (replay) --------------------------------------------------
 
 def test_deterministic_replay():
-    """相同輸入序列 → 相同輸出。replay 模式可用的前提。"""
+    """Same input sequence -> same output. Replay mode prerequisite."""
     seq = [([person_in_roi(t)], t) for t in range(5)]
-    out_a = [status_of(OccupancyEngine().update(d, [SEAT], now=t), "F2-A07") for d, t in seq]
-    out_b = [status_of(OccupancyEngine().update(d, [SEAT], now=t), "F2-A07") for d, t in seq]
-    # 注意:同一引擎跨多輪才有記憶;此處示意「同輸入同輸出」,實測請用同一 engine 跑兩次序列
-    assert out_a == out_b
+
+    def run():
+        eng = OccupancyEngine()
+        return [status_of(eng.update(d, [SEAT], now=t)) for d, t in seq]
+
+    assert run() == run()
