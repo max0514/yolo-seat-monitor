@@ -720,16 +720,49 @@ def api_detect():
 
 
 # ---------- Routes: ESP32-CAM capture + detect ----------
+def _is_safe_camera_url(url):
+    """Block SSRF: only allow http/https to non-loopback addresses."""
+    from urllib.parse import urlparse
+    import ipaddress
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = parsed.hostname
+        if not host:
+            return False
+        # Block common loopback/metadata names
+        blocked_hosts = {"localhost", "127.0.0.1", "0.0.0.0", "::1",
+                         "metadata.google.internal", "169.254.169.254"}
+        if host.lower() in blocked_hosts:
+            return False
+        # Block loopback & link-local IPs
+        try:
+            addr = ipaddress.ip_address(host)
+            if addr.is_loopback or addr.is_link_local:
+                return False
+        except ValueError:
+            pass  # hostname, not IP — allow
+        return True
+    except Exception:
+        return False
+
+
 @app.route("/api/capture-detect", methods=["POST"])
 def api_capture_detect():
     body = request.get_json(silent=True) or {}
     url = body.get("url", "").strip()
     if not url:
         return jsonify({"error": "url is required"}), 400
+    if not _is_safe_camera_url(url):
+        return jsonify({"error": "URL blocked: only http/https to non-loopback hosts allowed"}), 403
 
     model_name = body.get("model", "nano")
-    conf = float(body.get("conf", 0.25))
-    iou = float(body.get("iou", 0.45))
+    try:
+        conf = float(body.get("conf", 0.25))
+        iou = float(body.get("iou", 0.45))
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid conf or iou value"}), 400
 
     try:
         resp = http_requests.get(url, timeout=8)
@@ -739,7 +772,8 @@ def api_capture_detect():
         if image_bgr is None:
             return jsonify({"error": "Failed to decode image from camera"}), 400
     except http_requests.RequestException as e:
-        return jsonify({"error": f"Camera fetch failed: {e}"}), 502
+        print(f"[CAMERA] fetch error: {e}")
+        return jsonify({"error": "Camera fetch failed — check URL and connectivity"}), 502
 
     try:
         annotated_bgr, detections, stats, elapsed_ms, seat_status, rois_used = run_inference(
@@ -889,8 +923,11 @@ def api_reference_post():
     return jsonify({"ok": True, "size": {"w": w, "h": h}})
 
 
-@app.route("/results/<path:filename>")
+@app.route("/results/<filename>")
 def serve_result(filename):
+    import re
+    if not re.match(r'^[a-f0-9]{12}\.jpg$', filename):
+        return jsonify({"error": "invalid filename"}), 400
     return send_from_directory(RESULT_DIR, filename)
 
 
@@ -900,13 +937,14 @@ def too_large(_):
 
 
 if __name__ == "__main__":
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", 5001))
     print("=" * 60)
     print(" YOLO Detection Web App  +  Seat ROI  +  History")
     print(f" Models   : {list(AVAILABLE_MODELS.keys())}")
     print(f" ROI file : {ROI_FILE}")
     print(f" DB file  : {DB_FILE}")
-    print(" Detector : http://127.0.0.1:5001/")
-    print(" Annotator: http://127.0.0.1:5001/annotator")
-    print(" History  : http://127.0.0.1:5001/history")
+    print(f" Listening: http://{host}:{port}/")
+    print(" Set HOST=0.0.0.0 to expose to network")
     print("=" * 60)
-    app.run(host="0.0.0.0", port=5001, debug=False)
+    app.run(host=host, port=port, debug=False)
