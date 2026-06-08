@@ -70,7 +70,7 @@ body {
 /* ── main grid ── */
 .main {
   flex: 1; display: grid;
-  grid-template-columns: 1fr 420px;
+  grid-template-columns: 1fr 560px;
   min-height: 0;
 }
 
@@ -228,7 +228,7 @@ body {
 /* camera */
 .cam-box {
   width: 100%; aspect-ratio: 4/3; border-radius: 6px; overflow: hidden;
-  background: #000; border: 1px solid var(--border); position: relative; min-height: 260px;
+  background: #000; border: 1px solid var(--border); position: relative; min-height: 380px;
 }
 .cam-box img { width: 100%; height: 100%; object-fit: contain; display: none; }
 .cam-box .placeholder {
@@ -322,15 +322,17 @@ body {
   <div class="viz">
     <div class="scene" id="scene">
       <div class="tables-row" id="tables-row">
-        <div class="table-group">
-          <div class="seats-row" id="default-seats"></div>
-          <div class="table-block"><span>TABLE</span></div>
-        </div>
+        <!-- populated dynamically after first detection -->
+      </div>
+      <div class="waiting-msg" id="waiting-msg">
+        <div style="font-size:32px; opacity:0.15; margin-bottom:12px;">&#x25CB;</div>
+        <div style="font-size:12px; letter-spacing:2px; color:var(--dim);">WAITING FOR DETECTION</div>
+        <div style="font-size:10px; color:var(--mute); margin-top:4px;">Click Snap or Live to start</div>
       </div>
     </div>
 
     <div class="banner">
-      <div class="banner-count none" id="banner-count">0 / 0</div>
+      <div class="banner-count none" id="banner-count">— / —</div>
       <div class="banner-sub">SEATS OCCUPIED</div>
     </div>
 
@@ -461,8 +463,22 @@ function buildScene(statuses, tableCount) {
   prevStates = {};
   totalSeats = statuses.length;
 
+  // Hide waiting message once we've run a detection
+  const waitMsg = $('waiting-msg');
+  if (waitMsg) waitMsg.style.display = 'none';
+
   if (statuses.length === 0 && tableCount === 0) {
-    row.innerHTML = '<div class="table-group"><div class="seats-row"></div><div class="table-block"><span>NO SEATS DETECTED</span></div></div>';
+    row.innerHTML = '<div style="text-align:center;color:var(--dim);font-size:12px;letter-spacing:1px;padding:20px;">NO CHAIRS OR TABLES DETECTED</div>';
+    return;
+  }
+  if (statuses.length === 0 && tableCount > 0) {
+    // Tables detected but no chairs
+    for (let i = 0; i < tableCount; i++) {
+      const group = document.createElement('div');
+      group.className = 'table-group';
+      group.innerHTML = `<div class="seats-row"></div><div class="table-block" style="width:180px;"><span>TABLE${tableCount > 1 ? ' '+(i+1) : ''}</span></div>`;
+      row.appendChild(group);
+    }
     return;
   }
 
@@ -588,22 +604,16 @@ async function capture(silent) {
 
     const seats = d.seats;
     const tableCount = seats.tables || 0;
-    if (seats.defined && seats.status.length > 0) {
+
+    // Always build the scene based on what was detected
+    if (seats.status && seats.status.length > 0) {
       buildScene(seats.status, tableCount);
       seats.status.forEach(s => setSeat(s));
       updateBanner(seats.status);
-    } else if (d.stats && (d.stats['chair'] || d.stats['couch'] || d.stats['dining table'])) {
-      // Detected furniture but no seat status — show empty scene
-      const nChairs = (d.stats['chair'] || 0) + (d.stats['couch'] || 0);
-      const nTables = d.stats['dining table'] || 0;
-      if (nChairs > 0) {
-        const mockSeats = Array.from({length: nChairs}, (_, i) => ({
-          id: `empty-${i+1}`, label: `Seat ${i+1}`, state: 'empty', belongings: []
-        }));
-        buildScene(mockSeats, nTables || 1);
-        mockSeats.forEach(s => setSeat(s));
-        updateBanner(mockSeats);
-      }
+    } else {
+      // No seats detected — show tables only (or empty)
+      buildScene([], tableCount);
+      updateBanner([]);
     }
 
     scans++;

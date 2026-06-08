@@ -421,26 +421,32 @@ def run_inference(image_bgr, model_name, conf, iou, apply_rois=True):
         cv2.putText(annotated_bgr, label, (x1 + 2, y1 - 4),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
 
-    # 座位狀態
+    # 座位狀態 — auto-detection first, ROI fallback
     seat_status = []
     rois_used = None
     table_count = 0
     seat_mode = "none"
     if apply_rois:
-        rois = load_rois()
-        if rois.get("seats"):
-            # ROI mode — use annotated polygons
-            seat_mode = "roi"
-            h, w = image_bgr.shape[:2]
-            rois_scaled = scaled_rois(rois, w, h)
-            seat_status = compute_seat_status(detections, rois_scaled, image_bgr.shape)
-            annotated_bgr = draw_seat_overlay(annotated_bgr, rois_scaled, seat_status)
-            rois_used = rois_scaled
-            table_count = stats.get("dining table", 0) or 1
-        else:
-            # Auto mode — use detected chairs as seats
+        has_chairs = any(d["class"] in ("chair", "couch") for d in detections)
+        if has_chairs:
+            # Auto mode — dynamically use detected chairs as seats
             seat_mode = "auto"
             seat_status, table_count = auto_detect_seats(detections, image_bgr.shape)
+        else:
+            # Fallback to ROI mode if chairs aren't visible but ROIs exist
+            rois = load_rois()
+            if rois.get("seats"):
+                seat_mode = "roi"
+                h, w = image_bgr.shape[:2]
+                rois_scaled = scaled_rois(rois, w, h)
+                seat_status = compute_seat_status(detections, rois_scaled, image_bgr.shape)
+                annotated_bgr = draw_seat_overlay(annotated_bgr, rois_scaled, seat_status)
+                rois_used = rois_scaled
+                table_count = stats.get("dining table", 0) or 1
+            else:
+                # Nothing — no chairs detected and no ROIs
+                seat_mode = "auto"
+                table_count = stats.get("dining table", 0)
 
     return annotated_bgr, detections, stats, elapsed_ms, seat_status, rois_used, table_count, seat_mode
 
